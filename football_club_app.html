@@ -95,6 +95,7 @@
             const [isAdmin, setIsAdmin] = useState(false);
             const [isLoggedIn, setIsLoggedIn] = useState(false);
             const [currentView, setCurrentView] = useState('dashboard');
+            const [activeTab, setActiveTab] = useState('matches');
             const [password, setPassword] = useState('');
             const [showImportModal, setShowImportModal] = useState(false);
             const [importType, setImportType] = useState('csv');
@@ -174,11 +175,12 @@
                 setIsLoggedIn(false);
                 setIsAdmin(false);
                 setCurrentView('dashboard');
+                setActiveTab('matches');
                 setPassword('');
             };
 
             const handleAddPlayer = () => {
-                if (newPlayer.name && newPlayer.number) {
+                if (newPlayer.name.trim() && newPlayer.number) {
                     const newId = Math.max(...players.map(p => p.id), 0) + 1;
                     setPlayers([...players, {
                         id: newId,
@@ -187,6 +189,7 @@
                         teams: [newPlayer.teamId]
                     }]);
                     setNewPlayer({ name: '', number: '', teamId: 1 });
+                    alert('✅ Spieler hinzugefügt!');
                 }
             };
 
@@ -222,6 +225,7 @@
                         locationName: '',
                         locationAddress: ''
                     });
+                    alert('✅ Spiel hinzugefügt!');
                 }
             };
 
@@ -297,17 +301,22 @@
             };
 
             const handleDeleteMatch = (matchId) => {
-                setMatches(matches.filter(m => m.id !== matchId));
+                if (window.confirm('Spiel wirklich löschen?')) {
+                    setMatches(matches.filter(m => m.id !== matchId));
+                }
             };
 
             const handleDeletePlayer = (playerId) => {
-                setPlayers(players.filter(p => p.id !== playerId));
+                if (window.confirm('Spieler wirklich löschen?')) {
+                    setPlayers(players.filter(p => p.id !== playerId));
+                }
             };
 
             const getTeamName = (teamId) => teams.find(t => t.id === teamId)?.name || '';
             const getPlayerName = (playerId) => players.find(p => p.id === playerId)?.name || '';
             const getMatchesByTeam = (teamId) => matches.filter(m => m.teamId === teamId);
 
+            // LOGIN VIEW
             if (!isLoggedIn) {
                 return (
                     <div style={{ padding: '2rem', maxWidth: '400px', margin: '0 auto' }}>
@@ -343,6 +352,7 @@
                 );
             }
 
+            // DASHBOARD VIEW
             if (currentView === 'dashboard') {
                 return (
                     <div style={{ padding: '1.5rem', maxWidth: '1200px', margin: '0 auto' }}>
@@ -356,17 +366,20 @@
                             <div style={{ display: 'flex', gap: '8px' }}>
                                 {isAdmin && (
                                     <button 
-                                        onClick={() => setCurrentView('manage')}
-                                        style={{ padding: '8px 16px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer' }}
+                                        onClick={() => {
+                                            setCurrentView('manage');
+                                            setActiveTab('matches');
+                                        }}
+                                        style={{ padding: '8px 16px', background: 'var(--fill-accent)', color: 'white', border: 'none', borderRadius: 'var(--radius)', cursor: 'pointer' }}
                                     >
-                                        Verwaltung
+                                        ⚙️ Verwaltung
                                     </button>
                                 )}
                                 <button 
                                     onClick={handleLogout}
                                     style={{ padding: '8px 16px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer' }}
                                 >
-                                    Abmelden
+                                    🚪 Abmelden
                                 </button>
                             </div>
                         </div>
@@ -389,62 +402,66 @@
 
                         <h2 style={{ fontSize: '20px', marginBottom: '1rem' }}>Anstehende Spiele</h2>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                            {matches.slice(0, 5).map(match => {
-                                const confirmed = Object.values(match.attendees).filter(a => a === 'zusage').length;
-                                return (
-                                    <div key={match.id} style={{ background: 'var(--surface-2)', border: '0.5px solid var(--border)', borderRadius: '12px', padding: '1rem' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
-                                            <div>
-                                                <h4 style={{ margin: '0 0 4px', fontSize: '16px' }}>
-                                                    {match.matchType === 'home' ? '🏠' : '🚗'} vs {match.opponent}
-                                                </h4>
-                                                <p style={{ margin: '0', fontSize: '14px', color: 'var(--text-secondary)' }}>
-                                                    {getTeamName(match.teamId)} • {match.date} {match.time} • {match.location.name}
-                                                </p>
+                            {matches.length === 0 ? (
+                                <p style={{ color: 'var(--text-secondary)' }}>Noch keine Spiele eingeplant</p>
+                            ) : (
+                                matches.slice(0, 5).map(match => {
+                                    const confirmed = Object.values(match.attendees).filter(a => a === 'zusage').length;
+                                    return (
+                                        <div key={match.id} style={{ background: 'var(--surface-2)', border: '0.5px solid var(--border)', borderRadius: '12px', padding: '1rem' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
+                                                <div>
+                                                    <h4 style={{ margin: '0 0 4px', fontSize: '16px' }}>
+                                                        {match.matchType === 'home' ? '🏠' : '🚗'} vs {match.opponent}
+                                                    </h4>
+                                                    <p style={{ margin: '0', fontSize: '14px', color: 'var(--text-secondary)' }}>
+                                                        {getTeamName(match.teamId)} • {match.date} {match.time} • {match.location.name}
+                                                    </p>
+                                                </div>
+                                                <span style={{ fontSize: '12px', background: 'var(--surface-1)', padding: '4px 8px', borderRadius: 'var(--radius)' }}>
+                                                    {confirmed} zusagen
+                                                </span>
                                             </div>
-                                            <span style={{ fontSize: '12px', background: 'var(--surface-1)', padding: '4px 8px', borderRadius: 'var(--radius)' }}>
-                                                {confirmed} zusagen
-                                            </span>
                                         </div>
-                                    </div>
-                                );
-                            })}
+                                    );
+                                })
+                            )}
                         </div>
                     </div>
                 );
             }
 
+            // MANAGEMENT VIEW
             if (currentView === 'manage') {
-                const [activeTab, setActiveTab] = useState('matches');
-
                 return (
-                    <div style={{ padding: '1.5rem', maxWidth: '1200px', margin: '0 auto' }}>
+                    <div style={{ padding: '1.5rem', maxWidth: '1400px', margin: '0 auto' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
-                            <h1 style={{ margin: '0', fontSize: '24px' }}>Vereinsverwaltung</h1>
+                            <h1 style={{ margin: '0', fontSize: '24px' }}>⚙️ Vereinsverwaltung</h1>
                             <button 
                                 onClick={() => setCurrentView('dashboard')}
                                 style={{ padding: '8px 16px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer' }}
                             >
-                                Zurück
+                                ← Zurück
                             </button>
                         </div>
 
                         <div style={{ display: 'flex', gap: '16px', borderBottom: '0.5px solid var(--border)', marginBottom: '2rem' }}>
                             {[
-                                { id: 'matches', label: 'Spielplan' },
-                                { id: 'players', label: 'Spieler' }
+                                { id: 'matches', label: '📅 Spielplan' },
+                                { id: 'players', label: '👥 Spieler' }
                             ].map(tab => (
                                 <button
                                     key={tab.id}
                                     onClick={() => setActiveTab(tab.id)}
                                     style={{
-                                        padding: '12px 0',
+                                        padding: '12px 16px',
                                         background: 'transparent',
                                         border: 'none',
                                         borderBottom: activeTab === tab.id ? '2px solid var(--fill-accent)' : 'transparent',
                                         cursor: 'pointer',
                                         color: activeTab === tab.id ? 'var(--text-primary)' : 'var(--text-secondary)',
-                                        fontWeight: activeTab === tab.id ? '500' : '400'
+                                        fontWeight: activeTab === tab.id ? '500' : '400',
+                                        fontSize: '16px'
                                     }}
                                 >
                                     {tab.label}
@@ -452,11 +469,12 @@
                             ))}
                         </div>
 
+                        {/* MATCHES TAB */}
                         {activeTab === 'matches' && (
                             <div>
-                                <div style={{ background: 'var(--surface-1)', border: '0.5px solid var(--border)', borderRadius: '12px', padding: '1.25rem', marginBottom: '2rem' }}>
-                                    <h4 style={{ margin: '0 0 16px', fontSize: '16px' }}>📅 Neues Spiel</h4>
-                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px', marginBottom: '12px' }}>
+                                <div style={{ background: 'var(--surface-1)', border: '0.5px solid var(--border)', borderRadius: '12px', padding: '1.5rem', marginBottom: '2rem' }}>
+                                    <h4 style={{ margin: '0 0 1rem', fontSize: '16px' }}>📅 Neues Spiel</h4>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px', marginBottom: '1rem' }}>
                                         <div>
                                             <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Mannschaft</label>
                                             <select value={newMatch.teamId} onChange={(e) => setNewMatch({...newMatch, teamId: parseInt(e.target.value)})} style={{ width: '100%' }}>
@@ -482,24 +500,24 @@
                                         <div>
                                             <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Heim/Auswärts</label>
                                             <select value={newMatch.matchType} onChange={(e) => setNewMatch({...newMatch, matchType: e.target.value})} style={{ width: '100%' }}>
-                                                <option value="home">Heimspiel 🏠</option>
-                                                <option value="away">Auswärtsspiel 🚗</option>
+                                                <option value="home">🏠 Heimspiel</option>
+                                                <option value="away">🚗 Auswärts</option>
                                             </select>
                                         </div>
                                         <div>
                                             <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Spielort</label>
                                             <input type="text" value={newMatch.locationName} onChange={(e) => setNewMatch({...newMatch, locationName: e.target.value})} placeholder="Stadion/Platz" style={{ width: '100%' }} />
                                         </div>
-                                        <div style={{ gridColumn: 'span 2' }}>
+                                        <div style={{ gridColumn: '1 / -1' }}>
                                             <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Adresse</label>
                                             <input type="text" value={newMatch.locationAddress} onChange={(e) => setNewMatch({...newMatch, locationAddress: e.target.value})} placeholder="Straße, Hausnr., PLZ Stadt" style={{ width: '100%' }} />
                                         </div>
                                     </div>
                                     <div style={{ display: 'flex', gap: '8px' }}>
-                                        <button onClick={handleAddMatch} style={{ flex: 1, padding: '10px 16px', background: 'var(--fill-accent)', color: 'white', border: 'none', borderRadius: 'var(--radius)', cursor: 'pointer', fontWeight: '500' }}>
-                                            + Spiel hinzufügen
+                                        <button onClick={handleAddMatch} style={{ flex: 1, padding: '10px', background: 'var(--fill-accent)', color: 'white', border: 'none', borderRadius: 'var(--radius)', cursor: 'pointer', fontWeight: '500' }}>
+                                            ➕ Spiel hinzufügen
                                         </button>
-                                        <button onClick={() => setShowImportModal(true)} style={{ flex: 1, padding: '10px 16px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer' }}>
+                                        <button onClick={() => setShowImportModal(true)} style={{ flex: 1, padding: '10px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer' }}>
                                             📥 Importieren
                                         </button>
                                     </div>
@@ -533,19 +551,9 @@
                                             <textarea
                                                 value={importData}
                                                 onChange={(e) => setImportData(e.target.value)}
-                                                placeholder={`Beispiel:\n1;22.12.2024;15:00;TSV Mitte;H;Stadion West;Hauptstr. 10, 09999 Stadt\n2;29.12.2024;14:30;FC Oben;A;Nordplatz;Nordstr. 5, 08888 Stadt`}
-                                                style={{ width: '100%', height: '180px', marginBottom: '1rem', fontSize: '11px', fontFamily: 'monospace', padding: '8px' }}
+                                                placeholder={`Beispiel:\n1;22.12.2024;15:00;TSV Mitte;H;Stadion West;Hauptstr. 10\n2;29.12.2024;14:30;FC Oben;A;Nordplatz;Nordstr. 5`}
+                                                style={{ width: '100%', height: '150px', marginBottom: '1rem', fontSize: '11px', fontFamily: 'monospace', padding: '8px' }}
                                             />
-
-                                            <div style={{ background: 'var(--surface-1)', padding: '12px', borderRadius: 'var(--radius)', marginBottom: '1rem', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                                                <strong style={{ display: 'block', marginBottom: '6px', color: 'var(--text-primary)' }}>Format-Erklärung:</strong>
-                                                <code style={{ display: 'block', fontSize: '11px', lineHeight: '1.5' }}>
-                                                    SpielNr: 1, 2, 3...<br/>
-                                                    Datum: TT.MM.YYYY<br/>
-                                                    H = Heimspiel, A = Auswärtsspiel<br/>
-                                                    Trennzeichen: Semikolon (;)
-                                                </code>
-                                            </div>
 
                                             {importMessage && (
                                                 <div style={{ padding: '12px', background: importMessage.includes('✅') ? 'var(--bg-success)' : 'var(--bg-danger)', borderRadius: 'var(--radius)', marginBottom: '1rem', color: importMessage.includes('✅') ? 'var(--text-success)' : 'var(--text-danger)', fontSize: '13px' }}>
@@ -573,91 +581,100 @@
 
                                 <h4 style={{ marginBottom: '1rem' }}>Spielplan ({matches.length} Spiele)</h4>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                                    {matches.map(match => {
-                                        const teamPlayers = players.filter(p => p.teams.includes(match.teamId));
-                                        const confirmed = Object.values(match.attendees).filter(a => a === 'zusage').length;
-                                        
-                                        return (
-                                            <div key={match.id} style={{ background: 'var(--surface-2)', border: '0.5px solid var(--border)', borderRadius: '12px', padding: '1rem' }}>
-                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '12px' }}>
-                                                    <div>
-                                                        <h5 style={{ margin: '0 0 4px', fontSize: '16px' }}>
-                                                            {match.matchType === 'home' ? '🏠' : '🚗'} vs {match.opponent} (Spiel {match.matchNumber})
-                                                        </h5>
-                                                        <p style={{ margin: '0', fontSize: '13px', color: 'var(--text-secondary)' }}>
-                                                            {getTeamName(match.teamId)} • {match.date} {match.time}
-                                                        </p>
-                                                        <p style={{ margin: '4px 0 0', fontSize: '12px', color: 'var(--text-secondary)' }}>
-                                                            📍 {match.location.name} {match.location.address ? `• ${match.location.address}` : ''}
-                                                        </p>
+                                    {matches.length === 0 ? (
+                                        <p style={{ color: 'var(--text-secondary)' }}>Noch keine Spiele eingeplant</p>
+                                    ) : (
+                                        matches.map(match => {
+                                            const teamPlayers = players.filter(p => p.teams.includes(match.teamId));
+                                            const confirmed = Object.values(match.attendees).filter(a => a === 'zusage').length;
+                                            
+                                            return (
+                                                <div key={match.id} style={{ background: 'var(--surface-2)', border: '0.5px solid var(--border)', borderRadius: '12px', padding: '1rem' }}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '12px' }}>
+                                                        <div>
+                                                            <h5 style={{ margin: '0 0 4px', fontSize: '16px' }}>
+                                                                {match.matchType === 'home' ? '🏠' : '🚗'} vs {match.opponent} (Spiel {match.matchNumber})
+                                                            </h5>
+                                                            <p style={{ margin: '0', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                                                                {getTeamName(match.teamId)} • {match.date} {match.time}
+                                                            </p>
+                                                            <p style={{ margin: '4px 0 0', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                                                📍 {match.location.name} {match.location.address ? `• ${match.location.address}` : ''}
+                                                            </p>
+                                                        </div>
+                                                        <button onClick={() => handleDeleteMatch(match.id)} style={{ padding: '4px 8px', background: 'transparent', border: '0.5px solid var(--border-danger)', borderRadius: 'var(--radius)', cursor: 'pointer', color: 'var(--text-danger)' }}>
+                                                            🗑
+                                                        </button>
                                                     </div>
-                                                    <button onClick={() => handleDeleteMatch(match.id)} style={{ padding: '4px 8px', background: 'transparent', border: '0.5px solid var(--border-danger)', borderRadius: 'var(--radius)', cursor: 'pointer', color: 'var(--text-danger)' }}>
-                                                        🗑
-                                                    </button>
-                                                </div>
 
-                                                <div style={{ marginBottom: '12px', paddingTop: '12px', borderTop: '0.5px solid var(--border)' }}>
-                                                    <p style={{ margin: '0 0 8px', fontSize: '13px', fontWeight: '500' }}>Zusagen: {confirmed}/{teamPlayers.length}</p>
-                                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                                                        {teamPlayers.map(player => {
-                                                            const status = match.attendees[player.id] || 'keine_antwort';
-                                                            const statusColors = { 'zusage': '#22c55e', 'absage': '#ef4444', 'keine_antwort': '#999999' };
-                                                            return (
-                                                                <div
-                                                                    key={player.id}
-                                                                    onClick={() => {
-                                                                        const nextStatus = status === 'zusage' ? 'absage' : status === 'absage' ? 'keine_antwort' : 'zusage';
-                                                                        handleAttendance(match.id, player.id, nextStatus);
-                                                                    }}
-                                                                    style={{
-                                                                        fontSize: '12px',
-                                                                        padding: '4px 8px',
-                                                                        borderRadius: 'var(--radius)',
-                                                                        background: statusColors[status] + '20',
-                                                                        color: statusColors[status],
-                                                                        border: '0.5px solid ' + statusColors[status] + '50',
-                                                                        cursor: 'pointer'
-                                                                    }}
-                                                                >
-                                                                    {player.name.split(' ')[0]}
-                                                                </div>
-                                                            );
-                                                        })}
+                                                    <div style={{ marginBottom: '12px', paddingTop: '12px', borderTop: '0.5px solid var(--border)' }}>
+                                                        <p style={{ margin: '0 0 8px', fontSize: '13px', fontWeight: '500' }}>Zusagen: {confirmed}/{teamPlayers.length}</p>
+                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                                            {teamPlayers.map(player => {
+                                                                const status = match.attendees[player.id] || 'keine_antwort';
+                                                                const statusColors = { 'zusage': '#22c55e', 'absage': '#ef4444', 'keine_antwort': '#999999' };
+                                                                return (
+                                                                    <div
+                                                                        key={player.id}
+                                                                        onClick={() => {
+                                                                            const nextStatus = status === 'zusage' ? 'absage' : status === 'absage' ? 'keine_antwort' : 'zusage';
+                                                                            handleAttendance(match.id, player.id, nextStatus);
+                                                                        }}
+                                                                        style={{
+                                                                            fontSize: '12px',
+                                                                            padding: '4px 8px',
+                                                                            borderRadius: 'var(--radius)',
+                                                                            background: statusColors[status] + '20',
+                                                                            color: statusColors[status],
+                                                                            border: '0.5px solid ' + statusColors[status] + '50',
+                                                                            cursor: 'pointer'
+                                                                        }}
+                                                                    >
+                                                                        {player.name.split(' ')[0]}
+                                                                    </div>
+                                                                );
+                                                            })}
+                                                        </div>
                                                     </div>
-                                                </div>
 
-                                                <div style={{ paddingTop: '12px', borderTop: '0.5px solid var(--border)' }}>
-                                                    <p style={{ margin: '0 0 8px', fontSize: '13px', fontWeight: '500' }}>Aufgabenverteilung</p>
-                                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '8px' }}>
-                                                        {teamPlayers.filter(p => match.attendees[p.id] === 'zusage').map(player => (
-                                                            <div key={player.id} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                                <span style={{ fontSize: '12px', minWidth: '80px' }}>{player.name.split(' ')[0]}:</span>
-                                                                <select
-                                                                    value={match.tasks[player.id] || ''}
-                                                                    onChange={(e) => handleAssignTask(match.id, player.id, e.target.value)}
-                                                                    style={{ fontSize: '12px', padding: '4px 6px', flex: 1 }}
-                                                                >
-                                                                    <option value="">-- Aufgabe --</option>
-                                                                    {TASKS.map(task => (
-                                                                        <option key={task.id} value={task.id}>{task.icon} {task.label}</option>
-                                                                    ))}
-                                                                </select>
-                                                            </div>
-                                                        ))}
+                                                    <div style={{ paddingTop: '12px', borderTop: '0.5px solid var(--border)' }}>
+                                                        <p style={{ margin: '0 0 8px', fontSize: '13px', fontWeight: '500' }}>Aufgabenverteilung</p>
+                                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px' }}>
+                                                            {teamPlayers.filter(p => match.attendees[p.id] === 'zusage').length > 0 ? (
+                                                                teamPlayers.filter(p => match.attendees[p.id] === 'zusage').map(player => (
+                                                                    <div key={player.id} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                                        <span style={{ fontSize: '12px', minWidth: '70px' }}>{player.name.split(' ')[0]}:</span>
+                                                                        <select
+                                                                            value={match.tasks[player.id] || ''}
+                                                                            onChange={(e) => handleAssignTask(match.id, player.id, e.target.value)}
+                                                                            style={{ fontSize: '12px', padding: '4px', flex: 1 }}
+                                                                        >
+                                                                            <option value="">Aufgabe</option>
+                                                                            {TASKS.map(task => (
+                                                                                <option key={task.id} value={task.id}>{task.icon} {task.label}</option>
+                                                                            ))}
+                                                                        </select>
+                                                                    </div>
+                                                                ))
+                                                            ) : (
+                                                                <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Keine Zusagen</p>
+                                                            )}
+                                                        </div>
                                                     </div>
                                                 </div>
-                                            </div>
-                                        );
-                                    })}
+                                            );
+                                        })
+                                    )}
                                 </div>
                             </div>
                         )}
 
+                        {/* PLAYERS TAB */}
                         {activeTab === 'players' && (
                             <div>
-                                <div style={{ background: 'var(--surface-1)', border: '0.5px solid var(--border)', borderRadius: '12px', padding: '1.25rem', marginBottom: '2rem' }}>
-                                    <h4 style={{ margin: '0 0 16px', fontSize: '16px' }}>👤 Neuer Spieler</h4>
-                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px', marginBottom: '12px' }}>
+                                <div style={{ background: 'var(--surface-1)', border: '0.5px solid var(--border)', borderRadius: '12px', padding: '1.5rem', marginBottom: '2rem' }}>
+                                    <h4 style={{ margin: '0 0 1rem', fontSize: '16px' }}>👤 Neuer Spieler</h4>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px', marginBottom: '1rem' }}>
                                         <div>
                                             <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Name</label>
                                             <input type="text" value={newPlayer.name} onChange={(e) => setNewPlayer({...newPlayer, name: e.target.value})} placeholder="Spielername" style={{ width: '100%' }} />
@@ -674,19 +691,19 @@
                                         </div>
                                     </div>
                                     <button onClick={handleAddPlayer} style={{ padding: '10px 16px', background: 'var(--fill-accent)', color: 'white', border: 'none', borderRadius: 'var(--radius)', cursor: 'pointer', fontWeight: '500' }}>
-                                        + Spieler hinzufügen
+                                        ➕ Spieler hinzufügen
                                     </button>
                                 </div>
 
-                                <h4 style={{ marginBottom: '1rem' }}>Spielerliste ({players.length})</h4>
+                                <h4 style={{ marginBottom: '1rem' }}>Spielerliste ({players.length} Spieler)</h4>
                                 <div style={{ overflowX: 'auto' }}>
-                                    <table style={{ width: '100%' }}>
+                                    <table style={{ width: '100%', fontSize: '14px' }}>
                                         <thead>
                                             <tr style={{ borderBottom: '0.5px solid var(--border)' }}>
-                                                <th style={{ textAlign: 'left', padding: '12px', fontWeight: '500' }}>Name</th>
-                                                <th style={{ textAlign: 'center', padding: '12px', fontWeight: '500' }}>Nr.</th>
-                                                <th style={{ textAlign: 'left', padding: '12px', fontWeight: '500' }}>Mannschaft</th>
-                                                <th style={{ textAlign: 'left', padding: '12px', fontWeight: '500' }}>Aktion</th>
+                                                <th style={{ padding: '12px', fontWeight: '500', textAlign: 'left' }}>Name</th>
+                                                <th style={{ padding: '12px', fontWeight: '500', textAlign: 'center' }}>Nr.</th>
+                                                <th style={{ padding: '12px', fontWeight: '500', textAlign: 'left' }}>Mannschaft</th>
+                                                <th style={{ padding: '12px', fontWeight: '500', textAlign: 'left' }}>Aktion</th>
                                             </tr>
                                         </thead>
                                         <tbody>
