@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⚽ FC Vereinsverwaltung</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --text-primary: #1a1a1a;
+            --text-secondary: #666;
+            --text-danger: #dc2626;
+            --text-success: #16a34a;
+            --fill-accent: #2563eb;
+            --surface-1: #f5f5f5;
+            --surface-2: #ffffff;
+            --border: #e0e0e0;
+            --border-danger: #fca5a5;
+            --bg-success: #dcfce7;
+            --bg-danger: #fee2e2;
+            --bg-info: #dbeafe;
+            --radius: 8px;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --text-primary: #ffffff;
+                --text-secondary: #999;
+                --surface-1: #1a1a1a;
+                --surface-2: #2a2a2a;
+                --border: #333;
+                --bg-success: #064e3b;
+                --bg-danger: #7f1d1d;
+                --bg-info: #0c2340;
+            }
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+            background: var(--surface-1);
+            color: var(--text-primary);
+        }
+
+        input, select, textarea {
+            background: var(--surface-2);
+            color: var(--text-primary);
+            border: 0.5px solid var(--border);
+            padding: 8px;
+            border-radius: var(--radius);
+            font-family: inherit;
+            font-size: 14px;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: var(--fill-accent);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        button {
+            font-family: inherit;
+            cursor: pointer;
+        }
+
+        code {
+            background: var(--surface-1);
+            padding: 2px 4px;
+            border-radius: 4px;
+        }
+
+        table {
+            font-size: 14px;
+        }
+
+        th, td {
+            text-align: left;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState } = React;
+
+        function FootballClubApp() {
+            const [isAdmin, setIsAdmin] = useState(false);
+            const [isLoggedIn, setIsLoggedIn] = useState(false);
+            const [currentView, setCurrentView] = useState('dashboard');
+            const [password, setPassword] = useState('');
+            const [showImportModal, setShowImportModal] = useState(false);
+            const [importType, setImportType] = useState('csv');
+            
+            const [teams] = useState([
+                { id: 1, name: 'Männer' },
+                { id: 2, name: 'A Jugend' },
+                { id: 3, name: 'B Jugend' }
+            ]);
+            
+            const [players, setPlayers] = useState([
+                { id: 1, name: 'Max Müller', number: 1, teams: [1] },
+                { id: 2, name: 'Tom Schmidt', number: 2, teams: [1] },
+                { id: 3, name: 'Klaus Fischer', number: 3, teams: [1] },
+                { id: 4, name: 'Peter Weber', number: 4, teams: [1] },
+                { id: 5, name: 'Hans Keller', number: 5, teams: [1] },
+            ]);
+
+            const TASKS = [
+                { id: 'field_marking', label: 'Abkreiden (Spielfeld)', icon: '📋' },
+                { id: 'linesman', label: 'Linienrichter', icon: '🚩' },
+                { id: 'cleaning', label: 'Wischen (Umkleideraum)', icon: '🧹' },
+                { id: 'laundry', label: 'Trikotwäsche', icon: '👕' },
+                { id: 'setup', label: 'Platz vorbereiten', icon: '🏗️' },
+                { id: 'keeper', label: 'Torwarttasche', icon: '🧤' },
+                { id: 'benches', label: 'Bänke wischen', icon: '🪑' },
+                { id: 'balls', label: 'Bälle checken', icon: '⚽' },
+                { id: 'goals', label: 'Tore aufbauen', icon: '🥅' },
+                { id: 'first_aid', label: 'Erste Hilfe', icon: '🩹' }
+            ];
+
+            const [matches, setMatches] = useState([
+                {
+                    id: 1,
+                    teamId: 1,
+                    matchNumber: '1',
+                    date: '2024-12-22',
+                    time: '15:00',
+                    opponent: 'TSV Mitte',
+                    matchType: 'home',
+                    location: { name: 'Stadion West', address: 'Hauptstr. 10, 09999 Stadt' },
+                    attendees: { 1: 'zusage', 2: 'zusage', 3: 'zusage', 4: 'absage', 5: 'zusage' },
+                    tasks: { 1: 'linesman', 2: 'goals', 3: 'first_aid' }
+                }
+            ]);
+
+            const [newPlayer, setNewPlayer] = useState({ name: '', number: '', teamId: 1 });
+            const [newMatch, setNewMatch] = useState({
+                teamId: 1,
+                matchNumber: '',
+                date: '',
+                time: '15:00',
+                opponent: '',
+                matchType: 'home',
+                locationName: '',
+                locationAddress: ''
+            });
+
+            const [importData, setImportData] = useState('');
+            const [importMessage, setImportMessage] = useState('');
+            const [selectedTeamForImport, setSelectedTeamForImport] = useState(1);
+
+            const handleLogin = (e) => {
+                e.preventDefault();
+                if (password === 'admin') {
+                    setIsAdmin(true);
+                    setIsLoggedIn(true);
+                    setPassword('');
+                } else if (password === 'user') {
+                    setIsAdmin(false);
+                    setIsLoggedIn(true);
+                    setPassword('');
+                }
+            };
+
+            const handleLogout = () => {
+                setIsLoggedIn(false);
+                setIsAdmin(false);
+                setCurrentView('dashboard');
+                setPassword('');
+            };
+
+            const handleAddPlayer = () => {
+                if (newPlayer.name && newPlayer.number) {
+                    const newId = Math.max(...players.map(p => p.id), 0) + 1;
+                    setPlayers([...players, {
+                        id: newId,
+                        name: newPlayer.name,
+                        number: parseInt(newPlayer.number),
+                        teams: [newPlayer.teamId]
+                    }]);
+                    setNewPlayer({ name: '', number: '', teamId: 1 });
+                }
+            };
+
+            const handleAddMatch = () => {
+                if (newMatch.matchNumber && newMatch.date && newMatch.time && newMatch.opponent && newMatch.locationName) {
+                    const newId = Math.max(...matches.map(m => m.id), 0) + 1;
+                    const teamPlayers = players.filter(p => p.teams.includes(newMatch.teamId));
+                    
+                    const attendees = {};
+                    teamPlayers.forEach(p => {
+                        attendees[p.id] = 'keine_antwort';
+                    });
+
+                    setMatches([...matches, {
+                        id: newId,
+                        teamId: newMatch.teamId,
+                        matchNumber: newMatch.matchNumber,
+                        date: newMatch.date,
+                        time: newMatch.time,
+                        opponent: newMatch.opponent,
+                        matchType: newMatch.matchType,
+                        location: { name: newMatch.locationName, address: newMatch.locationAddress },
+                        attendees: attendees,
+                        tasks: {}
+                    }]);
+                    setNewMatch({
+                        teamId: 1,
+                        matchNumber: '',
+                        date: '',
+                        time: '15:00',
+                        opponent: '',
+                        matchType: 'home',
+                        locationName: '',
+                        locationAddress: ''
+                    });
+                }
+            };
+
+            const handleImportMatches = () => {
+                try {
+                    const lines = importData.trim().split('\n').filter(line => line.trim());
+                    if (lines.length === 0) {
+                        setImportMessage('❌ Keine Daten zum Importieren');
+                        return;
+                    }
+
+                    let imported = 0;
+                    const newMatches = [...matches];
+                    const maxId = Math.max(...matches.map(m => m.id), 0);
+                    const teamPlayers = players.filter(p => p.teams.includes(selectedTeamForImport));
+
+                    lines.forEach((line, idx) => {
+                        const parts = line.split(';').map(p => p.trim());
+                        
+                        if (parts.length >= 6) {
+                            const [matchNum, date, time, opponent, homeAway, location, address] = parts;
+                            
+                            if (matchNum && date && opponent && location) {
+                                const attendees = {};
+                                teamPlayers.forEach(p => {
+                                    attendees[p.id] = 'keine_antwort';
+                                });
+
+                                newMatches.push({
+                                    id: maxId + imported + 1,
+                                    teamId: selectedTeamForImport,
+                                    matchNumber: matchNum,
+                                    date: date,
+                                    time: time || '15:00',
+                                    opponent: opponent,
+                                    matchType: homeAway.toLowerCase().includes('h') || homeAway === 'H' ? 'home' : 'away',
+                                    location: { name: location, address: address || '' },
+                                    attendees: attendees,
+                                    tasks: {}
+                                });
+                                imported++;
+                            }
+                        }
+                    });
+
+                    setMatches(newMatches);
+                    setImportMessage(`✅ ${imported} Spiele erfolgreich importiert!`);
+                    setImportData('');
+                    
+                    setTimeout(() => {
+                        setShowImportModal(false);
+                        setImportMessage('');
+                    }, 1500);
+                } catch (error) {
+                    setImportMessage('❌ Fehler beim Import: ' + error.message);
+                }
+            };
+
+            const handleAttendance = (matchId, playerId, status) => {
+                setMatches(matches.map(m =>
+                    m.id === matchId
+                        ? { ...m, attendees: { ...m.attendees, [playerId]: status } }
+                        : m
+                ));
+            };
+
+            const handleAssignTask = (matchId, playerId, taskId) => {
+                setMatches(matches.map(m =>
+                    m.id === matchId
+                        ? { ...m, tasks: { ...m.tasks, [playerId]: taskId } }
+                        : m
+                ));
+            };
+
+            const handleDeleteMatch = (matchId) => {
+                setMatches(matches.filter(m => m.id !== matchId));
+            };
+
+            const handleDeletePlayer = (playerId) => {
+                setPlayers(players.filter(p => p.id !== playerId));
+            };
+
+            const getTeamName = (teamId) => teams.find(t => t.id === teamId)?.name || '';
+            const getPlayerName = (playerId) => players.find(p => p.id === playerId)?.name || '';
+            const getMatchesByTeam = (teamId) => matches.filter(m => m.teamId === teamId);
+
+            if (!isLoggedIn) {
+                return (
+                    <div style={{ padding: '2rem', maxWidth: '400px', margin: '0 auto' }}>
+                        <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
+                            <h1 style={{ fontSize: '28px', marginBottom: '8px' }}>⚽ FC Vereinsverwaltung</h1>
+                            <p style={{ color: 'var(--text-secondary)' }}>Spieler & Spielplan verwalten</p>
+                        </div>
+                        
+                        <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            <div>
+                                <label style={{ fontSize: '14px', color: 'var(--text-secondary)', display: 'block', marginBottom: '6px' }}>
+                                    Passwort
+                                </label>
+                                <input
+                                    type="password"
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    placeholder="Passwort eingeben"
+                                    style={{ width: '100%' }}
+                                />
+                            </div>
+                            <button type="submit" style={{ padding: '10px', background: 'var(--fill-accent)', color: 'white', border: 'none', borderRadius: 'var(--radius)', cursor: 'pointer', fontWeight: '500' }}>
+                                Anmelden
+                            </button>
+                        </form>
+
+                        <div style={{ marginTop: '2rem', padding: '1rem', background: 'var(--surface-1)', borderRadius: 'var(--radius)', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                            <p style={{ margin: '0 0 8px' }}>Test-Logins:</p>
+                            <p style={{ margin: '0' }}>Admin: <code>admin</code></p>
+                            <p style={{ margin: '0' }}>Benutzer: <code>user</code></p>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (currentView === 'dashboard') {
+                return (
+                    <div style={{ padding: '1.5rem', maxWidth: '1200px', margin: '0 auto' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+                            <div>
+                                <h1 style={{ fontSize: '28px', margin: '0 0 4px' }}>⚽ FC Vereinsverwaltung</h1>
+                                <p style={{ margin: '0', color: 'var(--text-secondary)', fontSize: '14px' }}>
+                                    {isAdmin ? '👨‍💼 Admin-Ansicht' : '👤 Benutzer-Ansicht'}
+                                </p>
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                {isAdmin && (
+                                    <button 
+                                        onClick={() => setCurrentView('manage')}
+                                        style={{ padding: '8px 16px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer' }}
+                                    >
+                                        Verwaltung
+                                    </button>
+                                )}
+                                <button 
+                                    onClick={handleLogout}
+                                    style={{ padding: '8px 16px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer' }}
+                                >
+                                    Abmelden
+                                </button>
+                            </div>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '16px', marginBottom: '2rem' }}>
+                            {teams.map(team => {
+                                const teamMatches = getMatchesByTeam(team.id);
+                                const teamPlayersList = players.filter(p => p.teams.includes(team.id));
+                                return (
+                                    <div key={team.id} style={{ background: 'var(--surface-2)', border: '0.5px solid var(--border)', borderRadius: '12px', padding: '1rem' }}>
+                                        <h3 style={{ margin: '0 0 12px', fontSize: '18px' }}>{team.name}</h3>
+                                        <div style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>
+                                            <p style={{ margin: '0' }}>👥 {teamPlayersList.length} Spieler</p>
+                                            <p style={{ margin: '4px 0 0' }}>🗓️ {teamMatches.length} Spiele</p>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        <h2 style={{ fontSize: '20px', marginBottom: '1rem' }}>Anstehende Spiele</h2>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                            {matches.slice(0, 5).map(match => {
+                                const confirmed = Object.values(match.attendees).filter(a => a === 'zusage').length;
+                                return (
+                                    <div key={match.id} style={{ background: 'var(--surface-2)', border: '0.5px solid var(--border)', borderRadius: '12px', padding: '1rem' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
+                                            <div>
+                                                <h4 style={{ margin: '0 0 4px', fontSize: '16px' }}>
+                                                    {match.matchType === 'home' ? '🏠' : '🚗'} vs {match.opponent}
+                                                </h4>
+                                                <p style={{ margin: '0', fontSize: '14px', color: 'var(--text-secondary)' }}>
+                                                    {getTeamName(match.teamId)} • {match.date} {match.time} • {match.location.name}
+                                                </p>
+                                            </div>
+                                            <span style={{ fontSize: '12px', background: 'var(--surface-1)', padding: '4px 8px', borderRadius: 'var(--radius)' }}>
+                                                {confirmed} zusagen
+                                            </span>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                );
+            }
+
+            if (currentView === 'manage') {
+                const [activeTab, setActiveTab] = useState('matches');
+
+                return (
+                    <div style={{ padding: '1.5rem', maxWidth: '1200px', margin: '0 auto' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+                            <h1 style={{ margin: '0', fontSize: '24px' }}>Vereinsverwaltung</h1>
+                            <button 
+                                onClick={() => setCurrentView('dashboard')}
+                                style={{ padding: '8px 16px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer' }}
+                            >
+                                Zurück
+                            </button>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '16px', borderBottom: '0.5px solid var(--border)', marginBottom: '2rem' }}>
+                            {[
+                                { id: 'matches', label: 'Spielplan' },
+                                { id: 'players', label: 'Spieler' }
+                            ].map(tab => (
+                                <button
+                                    key={tab.id}
+                                    onClick={() => setActiveTab(tab.id)}
+                                    style={{
+                                        padding: '12px 0',
+                                        background: 'transparent',
+                                        border: 'none',
+                                        borderBottom: activeTab === tab.id ? '2px solid var(--fill-accent)' : 'transparent',
+                                        cursor: 'pointer',
+                                        color: activeTab === tab.id ? 'var(--text-primary)' : 'var(--text-secondary)',
+                                        fontWeight: activeTab === tab.id ? '500' : '400'
+                                    }}
+                                >
+                                    {tab.label}
+                                </button>
+                            ))}
+                        </div>
+
+                        {activeTab === 'matches' && (
+                            <div>
+                                <div style={{ background: 'var(--surface-1)', border: '0.5px solid var(--border)', borderRadius: '12px', padding: '1.25rem', marginBottom: '2rem' }}>
+                                    <h4 style={{ margin: '0 0 16px', fontSize: '16px' }}>📅 Neues Spiel</h4>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px', marginBottom: '12px' }}>
+                                        <div>
+                                            <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Mannschaft</label>
+                                            <select value={newMatch.teamId} onChange={(e) => setNewMatch({...newMatch, teamId: parseInt(e.target.value)})} style={{ width: '100%' }}>
+                                                {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Spielnr.</label>
+                                            <input type="text" value={newMatch.matchNumber} onChange={(e) => setNewMatch({...newMatch, matchNumber: e.target.value})} placeholder="z.B. 1" style={{ width: '100%' }} />
+                                        </div>
+                                        <div>
+                                            <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Datum</label>
+                                            <input type="date" value={newMatch.date} onChange={(e) => setNewMatch({...newMatch, date: e.target.value})} style={{ width: '100%' }} />
+                                        </div>
+                                        <div>
+                                            <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Zeit</label>
+                                            <input type="time" value={newMatch.time} onChange={(e) => setNewMatch({...newMatch, time: e.target.value})} style={{ width: '100%' }} />
+                                        </div>
+                                        <div>
+                                            <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Gegner</label>
+                                            <input type="text" value={newMatch.opponent} onChange={(e) => setNewMatch({...newMatch, opponent: e.target.value})} placeholder="Gegner" style={{ width: '100%' }} />
+                                        </div>
+                                        <div>
+                                            <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Heim/Auswärts</label>
+                                            <select value={newMatch.matchType} onChange={(e) => setNewMatch({...newMatch, matchType: e.target.value})} style={{ width: '100%' }}>
+                                                <option value="home">Heimspiel 🏠</option>
+                                                <option value="away">Auswärtsspiel 🚗</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Spielort</label>
+                                            <input type="text" value={newMatch.locationName} onChange={(e) => setNewMatch({...newMatch, locationName: e.target.value})} placeholder="Stadion/Platz" style={{ width: '100%' }} />
+                                        </div>
+                                        <div style={{ gridColumn: 'span 2' }}>
+                                            <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Adresse</label>
+                                            <input type="text" value={newMatch.locationAddress} onChange={(e) => setNewMatch({...newMatch, locationAddress: e.target.value})} placeholder="Straße, Hausnr., PLZ Stadt" style={{ width: '100%' }} />
+                                        </div>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                        <button onClick={handleAddMatch} style={{ flex: 1, padding: '10px 16px', background: 'var(--fill-accent)', color: 'white', border: 'none', borderRadius: 'var(--radius)', cursor: 'pointer', fontWeight: '500' }}>
+                                            + Spiel hinzufügen
+                                        </button>
+                                        <button onClick={() => setShowImportModal(true)} style={{ flex: 1, padding: '10px 16px', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer' }}>
+                                            📥 Importieren
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {showImportModal && (
+                                    <div style={{ position: 'fixed', inset: '0', background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+                                        <div style={{ background: 'var(--surface-2)', border: '0.5px solid var(--border)', borderRadius: '12px', padding: '2rem', maxWidth: '700px', width: '90%', maxHeight: '90vh', overflowY: 'auto' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                                                <h3 style={{ margin: '0', fontSize: '18px' }}>📥 Spielplan importieren</h3>
+                                                <button 
+                                                    onClick={() => { setShowImportModal(false); setImportMessage(''); }}
+                                                    style={{ background: 'transparent', border: 'none', fontSize: '20px', cursor: 'pointer', color: 'var(--text-secondary)' }}
+                                                >
+                                                    ✕
+                                                </button>
+                                            </div>
+
+                                            <div style={{ marginBottom: '1.5rem' }}>
+                                                <label style={{ fontSize: '13px', color: 'var(--text-secondary)', display: 'block', marginBottom: '8px', fontWeight: '500' }}>
+                                                    Mannschaft
+                                                </label>
+                                                <select value={selectedTeamForImport} onChange={(e) => setSelectedTeamForImport(parseInt(e.target.value))} style={{ width: '100%' }}>
+                                                    {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                                                </select>
+                                            </div>
+
+                                            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '8px', fontWeight: '500' }}>
+                                                Format: SpielNr;Datum;Zeit;Gegner;H/A;Spielort;Adresse
+                                            </p>
+                                            <textarea
+                                                value={importData}
+                                                onChange={(e) => setImportData(e.target.value)}
+                                                placeholder={`Beispiel:\n1;22.12.2024;15:00;TSV Mitte;H;Stadion West;Hauptstr. 10, 09999 Stadt\n2;29.12.2024;14:30;FC Oben;A;Nordplatz;Nordstr. 5, 08888 Stadt`}
+                                                style={{ width: '100%', height: '180px', marginBottom: '1rem', fontSize: '11px', fontFamily: 'monospace', padding: '8px' }}
+                                            />
+
+                                            <div style={{ background: 'var(--surface-1)', padding: '12px', borderRadius: 'var(--radius)', marginBottom: '1rem', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                                <strong style={{ display: 'block', marginBottom: '6px', color: 'var(--text-primary)' }}>Format-Erklärung:</strong>
+                                                <code style={{ display: 'block', fontSize: '11px', lineHeight: '1.5' }}>
+                                                    SpielNr: 1, 2, 3...<br/>
+                                                    Datum: TT.MM.YYYY<br/>
+                                                    H = Heimspiel, A = Auswärtsspiel<br/>
+                                                    Trennzeichen: Semikolon (;)
+                                                </code>
+                                            </div>
+
+                                            {importMessage && (
+                                                <div style={{ padding: '12px', background: importMessage.includes('✅') ? 'var(--bg-success)' : 'var(--bg-danger)', borderRadius: 'var(--radius)', marginBottom: '1rem', color: importMessage.includes('✅') ? 'var(--text-success)' : 'var(--text-danger)', fontSize: '13px' }}>
+                                                    {importMessage}
+                                                </div>
+                                            )}
+
+                                            <div style={{ display: 'flex', gap: '8px' }}>
+                                                <button 
+                                                    onClick={handleImportMatches}
+                                                    style={{ flex: 1, padding: '10px', background: 'var(--fill-accent)', color: 'white', border: 'none', borderRadius: 'var(--radius)', cursor: 'pointer', fontWeight: '500' }}
+                                                >
+                                                    ✓ Importieren
+                                                </button>
+                                                <button 
+                                                    onClick={() => { setShowImportModal(false); setImportMessage(''); }}
+                                                    style={{ flex: 1, padding: '10px', background: 'transparent', color: 'var(--text-primary)', border: '0.5px solid var(--border)', borderRadius: 'var(--radius)', cursor: 'pointer' }}
+                                                >
+                                                    Abbrechen
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                <h4 style={{ marginBottom: '1rem' }}>Spielplan ({matches.length} Spiele)</h4>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                    {matches.map(match => {
+                                        const teamPlayers = players.filter(p => p.teams.includes(match.teamId));
+                                        const confirmed = Object.values(match.attendees).filter(a => a === 'zusage').length;
+                                        
+                                        return (
+                                            <div key={match.id} style={{ background: 'var(--surface-2)', border: '0.5px solid var(--border)', borderRadius: '12px', padding: '1rem' }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '12px' }}>
+                                                    <div>
+                                                        <h5 style={{ margin: '0 0 4px', fontSize: '16px' }}>
+                                                            {match.matchType === 'home' ? '🏠' : '🚗'} vs {match.opponent} (Spiel {match.matchNumber})
+                                                        </h5>
+                                                        <p style={{ margin: '0', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                                                            {getTeamName(match.teamId)} • {match.date} {match.time}
+                                                        </p>
+                                                        <p style={{ margin: '4px 0 0', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                                                            📍 {match.location.name} {match.location.address ? `• ${match.location.address}` : ''}
+                                                        </p>
+                                                    </div>
+                                                    <button onClick={() => handleDeleteMatch(match.id)} style={{ padding: '4px 8px', background: 'transparent', border: '0.5px solid var(--border-danger)', borderRadius: 'var(--radius)', cursor: 'pointer', color: 'var(--text-danger)' }}>
+                                                        🗑
+                                                    </button>
+                                                </div>
+
+                                                <div style={{ marginBottom: '12px', paddingTop: '12px', borderTop: '0.5px solid var(--border)' }}>
+                                                    <p style={{ margin: '0 0 8px', fontSize: '13px', fontWeight: '500' }}>Zusagen: {confirmed}/{teamPlayers.length}</p>
+                                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                                        {teamPlayers.map(player => {
+                                                            const status = match.attendees[player.id] || 'keine_antwort';
+                                                            const statusColors = { 'zusage': '#22c55e', 'absage': '#ef4444', 'keine_antwort': '#999999' };
+                                                            return (
+                                                                <div
+                                                                    key={player.id}
+                                                                    onClick={() => {
+                                                                        const nextStatus = status === 'zusage' ? 'absage' : status === 'absage' ? 'keine_antwort' : 'zusage';
+                                                                        handleAttendance(match.id, player.id, nextStatus);
+                                                                    }}
+                                                                    style={{
+                                                                        fontSize: '12px',
+                                                                        padding: '4px 8px',
+                                                                        borderRadius: 'var(--radius)',
+                                                                        background: statusColors[status] + '20',
+                                                                        color: statusColors[status],
+                                                                        border: '0.5px solid ' + statusColors[status] + '50',
+                                                                        cursor: 'pointer'
+                                                                    }}
+                                                                >
+                                                                    {player.name.split(' ')[0]}
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+
+                                                <div style={{ paddingTop: '12px', borderTop: '0.5px solid var(--border)' }}>
+                                                    <p style={{ margin: '0 0 8px', fontSize: '13px', fontWeight: '500' }}>Aufgabenverteilung</p>
+                                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '8px' }}>
+                                                        {teamPlayers.filter(p => match.attendees[p.id] === 'zusage').map(player => (
+                                                            <div key={player.id} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                                <span style={{ fontSize: '12px', minWidth: '80px' }}>{player.name.split(' ')[0]}:</span>
+                                                                <select
+                                                                    value={match.tasks[player.id] || ''}
+                                                                    onChange={(e) => handleAssignTask(match.id, player.id, e.target.value)}
+                                                                    style={{ fontSize: '12px', padding: '4px 6px', flex: 1 }}
+                                                                >
+                                                                    <option value="">-- Aufgabe --</option>
+                                                                    {TASKS.map(task => (
+                                                                        <option key={task.id} value={task.id}>{task.icon} {task.label}</option>
+                                                                    ))}
+                                                                </select>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'players' && (
+                            <div>
+                                <div style={{ background: 'var(--surface-1)', border: '0.5px solid var(--border)', borderRadius: '12px', padding: '1.25rem', marginBottom: '2rem' }}>
+                                    <h4 style={{ margin: '0 0 16px', fontSize: '16px' }}>👤 Neuer Spieler</h4>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px', marginBottom: '12px' }}>
+                                        <div>
+                                            <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Name</label>
+                                            <input type="text" value={newPlayer.name} onChange={(e) => setNewPlayer({...newPlayer, name: e.target.value})} placeholder="Spielername" style={{ width: '100%' }} />
+                                        </div>
+                                        <div>
+                                            <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Rückennummer</label>
+                                            <input type="number" value={newPlayer.number} onChange={(e) => setNewPlayer({...newPlayer, number: e.target.value})} placeholder="z.B. 1" style={{ width: '100%' }} />
+                                        </div>
+                                        <div>
+                                            <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Mannschaft</label>
+                                            <select value={newPlayer.teamId} onChange={(e) => setNewPlayer({...newPlayer, teamId: parseInt(e.target.value)})} style={{ width: '100%' }}>
+                                                {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <button onClick={handleAddPlayer} style={{ padding: '10px 16px', background: 'var(--fill-accent)', color: 'white', border: 'none', borderRadius: 'var(--radius)', cursor: 'pointer', fontWeight: '500' }}>
+                                        + Spieler hinzufügen
+                                    </button>
+                                </div>
+
+                                <h4 style={{ marginBottom: '1rem' }}>Spielerliste ({players.length})</h4>
+                                <div style={{ overflowX: 'auto' }}>
+                                    <table style={{ width: '100%' }}>
+                                        <thead>
+                                            <tr style={{ borderBottom: '0.5px solid var(--border)' }}>
+                                                <th style={{ textAlign: 'left', padding: '12px', fontWeight: '500' }}>Name</th>
+                                                <th style={{ textAlign: 'center', padding: '12px', fontWeight: '500' }}>Nr.</th>
+                                                <th style={{ textAlign: 'left', padding: '12px', fontWeight: '500' }}>Mannschaft</th>
+                                                <th style={{ textAlign: 'left', padding: '12px', fontWeight: '500' }}>Aktion</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {players.map(player => (
+                                                <tr key={player.id} style={{ borderBottom: '0.5px solid var(--border)' }}>
+                                                    <td style={{ padding: '12px' }}>{player.name}</td>
+                                                    <td style={{ padding: '12px', textAlign: 'center' }}>{player.number}</td>
+                                                    <td style={{ padding: '12px' }}>
+                                                        {player.teams.map(teamId => getTeamName(teamId)).join(', ')}
+                                                    </td>
+                                                    <td style={{ padding: '12px' }}>
+                                                        <button onClick={() => handleDeletePlayer(player.id)} style={{ padding: '4px 8px', background: 'transparent', border: '0.5px solid var(--border-danger)', borderRadius: 'var(--radius)', cursor: 'pointer', fontSize: '12px', color: 'var(--text-danger)' }}>
+                                                            🗑 Löschen
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                );
+            }
+        }
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<FootballClubApp />);
+    </script>
+</body>
+</html>
