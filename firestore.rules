@@ -1,0 +1,63 @@
+rules_version = '2';
+// SGSO Teamplaner – Firestore-Sicherheitsregeln
+// In der Firebase-Konsole unter Firestore Database → Regeln einfügen und „Veröffentlichen“.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    function email() { return request.auth.token.email.lower(); }
+    function isStaff() { return signedIn() && exists(/databases/$(database)/documents/roles/$(email())); }
+    function isAdmin() { return isStaff() && get(/databases/$(database)/documents/roles/$(email())).data.role == 'admin'; }
+    function isMember() { return isStaff() || (signedIn() && exists(/databases/$(database)/documents/logins/$(email()))); }
+    function myPlayers() { return get(/databases/$(database)/documents/logins/$(email())).data.playerIds; }
+
+    // Ersteinrichtung: nur solange config/setup nicht existiert
+    match /config/setup {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && !exists(/databases/$(database)/documents/config/setup)
+        && getAfter(/databases/$(database)/documents/roles/$(email())).data.role == 'admin';
+    }
+    match /config/club {
+      allow read: if isMember();
+      allow write: if isStaff();
+    }
+
+    // Trainer/Admins (Dokument-ID = E-Mail in Kleinbuchstaben)
+    match /roles/{mail} {
+      allow read: if signedIn() && (mail == email() || isStaff());
+      allow create: if isAdmin()
+        || (signedIn() && mail == email() && request.resource.data.role == 'admin' && !exists(/databases/$(database)/documents/config/setup));
+      allow update, delete: if isAdmin();
+    }
+
+    // Zuordnung Login-E-Mail → Spieler
+    match /logins/{mail} {
+      allow read: if signedIn() && (mail == email() || isStaff());
+      allow write: if isStaff();
+    }
+
+    match /teams/{id}   { allow read: if isMember(); allow write: if isStaff(); }
+    match /players/{id} { allow read: if isMember(); allow write: if isStaff(); }
+    match /events/{id}  { allow read: if isMember(); allow write: if isStaff(); }
+    match /posts/{id}   { allow read: if isMember(); allow write: if isStaff(); }
+
+    // Telefon, E-Mail, Eltern: nur Trainer
+    match /contacts/{id} { allow read, write: if isStaff(); }
+
+    // Zu-/Absagen: Trainer alles, Spieler/Eltern nur für die eigenen Spieler
+    match /att/{eid} {
+      allow read: if isMember();
+      allow delete: if isStaff();
+      allow create, update: if isStaff() || (isMember() && onlyOwn());
+    }
+    function onlyOwn() {
+      let before = resource == null ? {} : resource.data.get('a', {});
+      let after = request.resource.data.get('a', {});
+      return request.resource.data.keys().hasOnly(['a', 'datum', 'teams'])
+        && after.diff(before).affectedKeys().hasOnly(myPlayers());
+    }
+  }
+}

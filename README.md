@@ -10,14 +10,25 @@ Ersatz für SpielerPlus zur Mannschaftsverwaltung der SGSO (Männer, Alte Herren
 - **Persönliche Ansicht „Meine“:** jeder sieht nur die Termine seiner Mannschaften; persönlicher Link `#p-<id>`
 - **Zu-/Absagen, Dienste, Pinnwand, Trainingsbeteiligung, Geburtstage, CSV-Export**
 
-## Betrieb
-`index.html` ist eine einzelne Datei ohne Build-Schritt.
+## Betrieb (Firebase, kostenlos im Spark-Tarif)
+`index.html` ist eine einzelne Datei ohne Build-Schritt. Daten, Anmeldung und Rechte laufen über Firebase (Projekt `sgso-teamplaner-dcf68`, Firestore in Frankfurt).
 
-- **In claude.ai (Artifact):** Daten liegen in einer gemeinsamen Datenbank, Rechte über „Teilen“ (Editor = Trainer).
-- **Als normale Webseite (z. B. GitHub Pages):** Die App läuft im *lokalen Modus* – Daten bleiben nur im jeweiligen Browser. Für gemeinsame Daten außerhalb von claude.ai braucht es ein Backend (z. B. Firebase/Supabase).
+**Einmalige Einrichtung**
+1. Firebase → Firestore Database → **Regeln**: Inhalt von `firestore.rules` einfügen → *Veröffentlichen*.
+2. Firebase → Authentication → Anmeldemethode: **Google** und **E-Mail/Passwort** aktivieren.
+3. Authentication → Einstellungen → Autorisierte Domains: `mexer91.github.io` eintragen.
+4. Authentication → Vorlagen: Sprache **Deutsch** wählen.
+5. GitHub → Settings → Pages → Branch `main`, Ordner `/` → App unter `https://mexer91.github.io/SGSO/`.
+6. App öffnen, anmelden → **„Als Admin einrichten“** (nur beim allerersten Login möglich).
 
-GitHub Pages aktivieren: *Settings → Pages → Branch `main`, Ordner `/`*. Danach ist die App unter `https://mexer91.github.io/SGSO/` erreichbar.
+**Rollen**
+- **Admin:** alles, plus Trainer/Admins freischalten (Mehr → Zugänge verwalten)
+- **Trainer:** alle Mannschaften bearbeiten, Kontaktdaten sehen, Zu-/Absagen für alle setzen
+- **Spieler/Eltern:** Zugang über „Login-E-Mails“ im Spielerprofil; sehen nur Termine ihrer Mannschaften und sagen nur für sich zu/ab
+
+**Gratis-Grenzen (Spark):** 50.000 Lesevorgänge und 20.000 Schreibvorgänge pro Tag, 1 GiB Speicher. Trainer laden Termine der letzten 120 Tage und alle künftigen, Spieler nur die ihrer Mannschaften.
 
 ## Dateien
-- `index.html` – aktueller Teamplaner
+- `index.html` – Teamplaner (Firebase)
+- `firestore.rules` – Sicherheitsregeln für Firestore
 - `football_club_app.html` – frühere Version (React)

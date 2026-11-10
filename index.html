@@ -28,6 +28,7 @@
   --ok:#62d394; --ok-soft:#173223; --no:#ff8f84; --no-soft:#3b1e1b; --maybe:#f1b84f; --maybe-soft:#3a2c13; --shadow:none; color-scheme:dark;
 }
 *{box-sizing:border-box}
+[hidden]{display:none !important}
 html,body{height:100%;margin:0}
 body{background:var(--bg);color:var(--ink);font:16px/1.45 var(--font-b);-webkit-font-smoothing:antialiased}
 button,input,select,textarea{font:inherit;color:inherit}
@@ -172,7 +173,25 @@ details.help ol{margin:8px 0 0;padding-left:20px}
 <div id="confirmRoot"></div>
 <div id="toastRoot"></div>
 
-<script>
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getAuth, onAuthStateChanged, signOut, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, setDoc, deleteDoc, getDoc, getDocs, onSnapshot, query, where, writeBatch, arrayUnion, arrayRemove } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyB3Ofoi0ZJqhkTjbbbQ_ehh94D3WckjuS8",
+  authDomain: "sgso-teamplaner-dcf68.firebaseapp.com",
+  projectId: "sgso-teamplaner-dcf68",
+  storageBucket: "sgso-teamplaner-dcf68.firebasestorage.app",
+  messagingSenderId: "962812663769",
+  appId: "1:962812663769:web:beb11c4f529e26e2d02bc8"
+};
+const fbApp = initializeApp(firebaseConfig);
+const auth = getAuth(fbApp); auth.languageCode = 'de';
+let fs;
+try { fs = initializeFirestore(fbApp, {localCache: persistentLocalCache({tabManager: persistentMultipleTabManager()})}); }
+catch(e){ fs = initializeFirestore(fbApp, {}); }
+
 /*LOGIC-START*/
 const pad = n => String(n).padStart(2, '0');
 const WD = ['So','Mo','Di','Mi','Do','Fr','Sa'];
@@ -305,7 +324,7 @@ function matchTeams(raw, teams){
 function fbKey(teamId, heim, gast, datum){ return 'fb:'+teamId+':'+seasonOf(datum)+':'+norm(heim).slice(0,40)+'|'+norm(gast).slice(0,40); }
 /*LOGIC-END*/
 
-const APP_URL = 'https://claude.ai/artifact/9982cQmhNg8rFeWm3xoEUv';
+const APP_URL = location.origin + location.pathname;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -327,13 +346,20 @@ const LS_KEY = 'sgso-teamplaner-v1';
 
 const S = {
   mode:'loading', note:'', canEdit:false, attWrite:false, readOnlyHit:false,
+  auth:'loading', authMode:'login', authMsg:'', email:'', loginEmail:'', role:null, isStaff:false, isAdmin:false, myPlayers:[], roles:null,
   club:{...DEFAULT_CLUB}, teams:{}, players:{}, contacts:{}, events:{}, att:{}, posts:{},
   meId:null, view:'termine', sub:null,
   f:{scope:'alle', team:'', typ:'', zeit:'kommend'}, pf:{q:'', team:'', inaktiv:false},
   sheet:null, imp:{team:'', text:'', rows:[], busy:false}, pimp:{text:''},
-  stat:{team:'', days:90, typ:'training'},
+  stat:{team:'', days:60, typ:'training'},
 };
-let DB = null, USER = null, SAMPLE = null, DL = null;
+let SAMPLE = null;
+const DL = { save: async ({filename, data}) => downloadFile(filename, data) };
+function downloadFile(name, text, mime){
+  const blob = new Blob([text], {type: mime || (name.endsWith('.ics') ? 'text/calendar;charset=utf-8' : 'text/csv;charset=utf-8')});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
 
 function lsGet(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
 function lsSet(k, v){ try { localStorage.setItem(k, v); } catch(e){} }
@@ -367,45 +393,50 @@ let toastT = null;
 function toast(msg){ $('#toastRoot').innerHTML = `<div class="toast" role="status">${esc(msg)}</div>`; clearTimeout(toastT); toastT = setTimeout(() => $('#toastRoot').innerHTML = '', 3200); }
 function errMsg(e){
   const c = e && e.code;
-  if(c === 'invalid_argument'){ S.readOnlyHit = true; return 'Speichern nicht erlaubt: Dafür brauchst du Bearbeitungsrechte. Bitte an den Trainer wenden.'; }
+  if(c === 'permission-denied' || c === 'invalid_argument'){ S.readOnlyHit = true; return 'Speichern nicht erlaubt: Dafür brauchst du Bearbeitungsrechte. Bitte an den Trainer wenden.'; }
   if(c === 'quota_exceeded') return 'Speicher voll: Bitte alte Termine löschen.';
-  if(c === 'resource_exhausted' || c === 'rate_limited') return 'Zu viele Änderungen auf einmal. Kurz warten und erneut versuchen.';
+  if(c === 'unavailable') return 'Keine Verbindung. Änderung wird gespeichert, sobald du wieder online bist.';
+  if(c === 'resource-exhausted' || c === 'rate_limited') return 'Zu viele Änderungen auf einmal. Kurz warten und erneut versuchen.';
   return 'Speichern fehlgeschlagen. Bitte erneut versuchen.';
 }
 async function retry(fn){ try { return await fn(); } catch(e){ if(e && e.code === 'unavailable'){ await new Promise(r => setTimeout(r, 400 + Math.random()*600)); return await fn(); } throw e; } }
 
-/* ---------- writes ---------- */
+/* ---------- writes (Firestore) ---------- */
 async function put(col, id, data){
   data = clone(data);
-  if(S.mode === 'db'){ await retry(() => DB.collection(col).doc(id).set(data)); }
+  await setDoc(doc(fs, col, id), data);
   S[col] = {...S[col], [id]: data};
-  saveLocal(); scheduleRender();
+  if(col === 'events' && S.att[id]){ setDoc(doc(fs, 'att', id), {datum: data.datum || '', teams: evTeams(data)}, {merge:true}).catch(() => {}); }
+  scheduleRender();
 }
 async function del(col, id){
-  if(S.mode === 'db'){ await retry(() => DB.collection(col).doc(id).delete()); }
+  await deleteDoc(doc(fs, col, id));
   const o = {...S[col]}; delete o[id]; S[col] = o;
-  saveLocal(); scheduleRender();
+  scheduleRender();
 }
 async function putClub(data){
   data = clone(data);
-  if(S.mode === 'db'){ await retry(() => DB.doc('config/club').set(data)); }
-  S.club = {...DEFAULT_CLUB, ...data}; saveLocal(); scheduleRender();
+  await setDoc(doc(fs, 'config', 'club'), data);
+  S.club = {...DEFAULT_CLUB, ...data}; scheduleRender();
 }
-const attQueue = {};
 async function setAtt(eid, pid, val){
   const v = {s: val.s || '', r: val.r || '', at: Date.now()};
-  const prev = S.att[eid];
-  S.att = {...S.att, [eid]: {a: {...((prev && prev.a) || {}), [pid]: v}}};
+  const prev = S.att[eid]; const e = S.events[eid] || {};
+  S.att = {...S.att, [eid]: {...(prev || {}), a: {...((prev && prev.a) || {}), [pid]: v}}};
   scheduleRender(); renderSheet();
-  if(S.mode !== 'db'){ saveLocal(); return; }
-  const run = async () => {
-    const ref = DB.collection('att').doc(eid);
-    if(prev) await retry(() => ref.update({a: {[pid]: v}}));
-    else await retry(() => ref.set({a: {[pid]: v}}));
-  };
-  attQueue[eid] = (attQueue[eid] || Promise.resolve()).then(run).catch(e => { S.att = {...S.att, [eid]: prev}; if(!prev){ const o = {...S.att}; delete o[eid]; S.att = o; } toast(errMsg(e)); scheduleRender(); renderSheet(); });
-  return attQueue[eid];
+  try { await setDoc(doc(fs, 'att', eid), {a: {[pid]: v}, datum: e.datum || '', teams: evTeams(e)}, {merge:true}); }
+  catch(err){ const o = {...S.att}; if(prev) o[eid] = prev; else delete o[eid]; S.att = o; toast(errMsg(err)); scheduleRender(); renderSheet(); }
 }
+async function syncLogins(pid, oldList, newList){
+  const add = newList.filter(m => !oldList.includes(m)), rem = oldList.filter(m => !newList.includes(m));
+  for(const m of add) await setDoc(doc(fs, 'logins', m), {playerIds: arrayUnion(pid)}, {merge:true});
+  for(const m of rem){
+    const ref = doc(fs, 'logins', m); const snap = await getDoc(ref);
+    const rest = snap.exists() ? (snap.data().playerIds || []).filter(x => x !== pid) : [];
+    if(rest.length) await setDoc(ref, {playerIds: rest}); else await deleteDoc(ref);
+  }
+}
+function parseMails(str){ return [...new Set(String(str||'').split(/[,;\s]+/).map(x => x.trim().toLowerCase()).filter(x => /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/.test(x)))]; }
 async function batch(items, fn, onProg){
   let done = 0; const size = 4;
   for(let i = 0; i < items.length; i += size){
@@ -423,8 +454,14 @@ function render(){
   const main = $('#main');
   $('#clubName').textContent = (S.club.name || 'Verein') + ' Teamplaner';
   $('#crest').textContent = String(S.club.name || 'SG').replace(/[^A-Za-zÄÖÜ]/g,'').slice(0,4).toUpperCase() || 'SG';
-  const mLine = S.mode === 'db' ? (S.canEdit ? 'Trainer-Ansicht · Live gespeichert' : 'Spieler-Ansicht · Live') : S.mode === 'local' ? 'Lokaler Modus · nur dieses Gerät' : 'Lädt…';
-  $('#modeLine').textContent = mLine;
+  const authed = S.auth === 'in';
+  $('#tabs').hidden = !authed; $('#meBtn').hidden = !authed;
+  $('#modeLine').textContent = authed ? (S.isAdmin ? 'Admin' : S.isStaff ? 'Trainer' : 'Spieler') + ' · ' + S.email : 'Bitte anmelden';
+  if(!authed){
+    main.innerHTML = `<div class="wrap" style="max-width:480px;padding-top:24px">${viewAuth()}</div>`;
+    if(fid){ const el = document.getElementById(fid); if(el){ el.focus({preventScroll:true}); if(sel) try { el.setSelectionRange(sel[0], sel[1]); } catch(e){} } }
+    return;
+  }
   const m = me(); $('#meBtn').textContent = m ? pName(m) : 'Wer bist du?';
   document.querySelectorAll('[data-nav]').forEach(b => b.setAttribute('aria-current', b.dataset.nav === S.view ? 'page' : 'false'));
   let html = '';
@@ -433,7 +470,7 @@ function render(){
   else if(S.view === 'spieler') html = viewSpieler();
   else if(S.view === 'teams') html = viewTeams();
   else html = viewMehr();
-  const top = (S.note ? `<div class="banner">${esc(S.note)}</div>` : '') + (S.mode === 'local' ? `<div class="banner">Lokaler Modus: Die Daten bleiben nur in diesem Browser. Für den Verein die App in claude.ai öffnen – dort werden sie gemeinsam gespeichert.</div>` : '');
+  const top = S.note ? `<div class="banner">${esc(S.note)}</div>` : '';
   main.innerHTML = `<div class="wrap">${top}${html}</div>`;
   if(fid){ const el = document.getElementById(fid); if(el && el !== document.activeElement){ el.focus({preventScroll:true}); if(sel) try { el.setSelectionRange(sel[0], sel[1]); } catch(e){} } }
 }
@@ -572,17 +609,19 @@ function viewMehr(){
   if(S.sub === 'pimport') return viewPImport();
   if(S.sub === 'export') return viewExport();
   if(S.sub === 'einstellungen') return viewSettings();
+  if(S.sub === 'zugaenge') return viewZugaenge();
   const tiles = [
     ['pinnwand','Pinnwand','Infos an Mannschaften', true],
     ['import','fussball.de-Import','Spielplan einfügen oder .ics laden', S.canEdit],
     ['statistik','Trainingsbeteiligung','Zu- und Absagen je Spieler', true],
     ['geburtstage','Geburtstage','Die nächsten 60 Tage', true],
     ['pimport','Spielerliste importieren','CSV aus Excel einfügen', S.canEdit],
-    ['export','Export','Spieler und Termine als CSV', S.canEdit],
+    ['export','Export & Kalender','Termine in den Handykalender, Listen als CSV', true],
+    ['zugaenge','Zugänge verwalten','Trainer und Admins freischalten', S.isAdmin],
     ['einstellungen','Einstellungen','Verein, Heim-Erkennung, Treffzeiten', true],
   ].filter(t => t[3]);
   return `<h2 style="font-size:24px">Mehr</h2><div class="grid2">${tiles.map(t => `<button type="button" class="tile" data-act="sub" data-sub="${t[0]}"><b>${t[1]}</b><span class="muted small">${t[2]}</span></button>`).join('')}</div>
-  <div class="card pad small muted"><b style="color:var(--ink)">Rechte und Datenschutz.</b> Telefonnummern, E-Mails und Elternkontakte sehen nur Trainer mit Bearbeitungsrechten. Für Jugendspieler die Einwilligung der Erziehungsberechtigten zur Speicherung der Kontaktdaten einholen. Spieler sehen Termine, Zu-/Absagen und die Pinnwand.</div>`;
+  <div class="card pad small muted"><b style="color:var(--ink)">Rechte und Datenschutz.</b> Telefonnummern, E-Mails und Elternkontakte sehen nur Trainer. Spieler sehen nur die Termine ihrer Mannschaften, Zu-/Absagen und die Pinnwand und können nur für sich selbst zu- oder absagen. Für Jugendspieler die Einwilligung der Erziehungsberechtigten zur Speicherung einholen. Daten liegen in Firebase (Google), Standort Frankfurt.</div>`;
 }
 const back = `<button type="button" class="back" data-act="sub" data-sub="">‹ Zurück</button>`;
 
@@ -699,7 +738,7 @@ function viewStatistik(){
   const rows = ps.map(p => { const c = {y:0,n:0,m:0,o:0}; evs.forEach(e => { const s = attOf(e.id)[p.id]?.s; if(s==='y'||s==='n'||s==='m') c[s]++; else c.o++; }); return {p, c, q: evs.length ? c.y/evs.length : 0}; }).sort((a,b) => b.q-a.q || a.p.name.localeCompare(b.p.name));
   let h = back + `<h2 style="font-size:24px">Trainingsbeteiligung</h2>`;
   h += `<div class="f3"><div class="fld"><label for="stTeam">Mannschaft</label><select id="stTeam">${teams.map(t => `<option value="${esc(t.id)}" ${st.team===t.id?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div>
-    <div class="fld"><label for="stDays">Zeitraum</label><select id="stDays">${[[30,'30 Tage'],[90,'90 Tage'],[180,'180 Tage'],['saison','Saison']].map(([v,l]) => `<option value="${v}" ${String(st.days)===String(v)?'selected':''}>${l}</option>`).join('')}</select></div>
+    <div class="fld"><label for="stDays">Zeitraum</label><select id="stDays">${[[30,'30 Tage'],[60,'60 Tage'],[120,'120 Tage']].map(([v,l]) => `<option value="${v}" ${String(st.days)===String(v)?'selected':''}>${l}</option>`).join('')}</select></div>
     <div class="fld"><label for="stTyp">Art</label><select id="stTyp">${[['training','Training'],['spiel','Spiele'],['','Alle']].map(([v,l]) => `<option value="${v}" ${st.typ===v?'selected':''}>${l}</option>`).join('')}</select></div></div>`;
   h += `<div class="small muted">${evs.length} Termine ausgewertet. Quote = Zusagen geteilt durch Termine.</div>`;
   if(!rows.length || !evs.length) return h + `<div class="card empty"><b>Noch keine Daten</b>Vergangene Termine mit Rückmeldungen erscheinen hier.</div>`;
@@ -709,7 +748,7 @@ function viewStatistik(){
 function viewPImport(){
   const rows = parsePlayersCSV(S.pimp.text);
   return back + `<h2 style="font-size:24px">Spielerliste importieren</h2>
-    <div class="card pad small">Eine Zeile je Person, Spalten mit Semikolon oder Tab getrennt (direkt aus Excel kopierbar):<br><code>Vorname;Name;Geburtstag;Mannschaften;Telefon;E-Mail</code><br>Mannschaften mit Komma trennen, z.&nbsp;B. <code>Männer, AH</code> oder <code>C-Jugend</code>.</div>
+    <div class="card pad small">Eine Zeile je Person, Spalten mit Semikolon oder Tab getrennt (direkt aus Excel kopierbar):<br><code>Vorname;Name;Geburtstag;Mannschaften;Telefon;E-Mail</code><br>Mannschaften mit Komma trennen, z.&nbsp;B. <code>Männer, AH</code> oder <code>C-Jugend</code>. Die E-Mail wird automatisch als Login-E-Mail für die App hinterlegt.</div>
     <div class="fld"><label for="pimpText">Daten</label><textarea id="pimpText" rows="8" placeholder="Max;Muster;14.03.2012;C-Jugend;0171 1234567;eltern@example.de">${esc(S.pimp.text)}</textarea></div>
     ${rows.length ? `<div class="card pad tablewrap"><table><thead><tr><th>Name</th><th>Geb.</th><th>Teams</th><th>Kontakt</th></tr></thead><tbody>${rows.map(r => { const ids = matchTeams(r.teamsRaw, S.teams); return `<tr><td>${esc(r.vorname+' '+r.name)}</td><td>${esc(r.geb ? r.geb.split('-').reverse().join('.') : '–')}</td><td>${ids.map(tchip).join(' ') || '<span class="warn">keine</span>'}</td><td class="small">${esc([r.tel,r.mail].filter(Boolean).join(' · '))}</td></tr>`; }).join('')}</tbody></table></div>
     <button type="button" class="btn primary" data-act="pimpdo">${rows.length} Personen übernehmen</button>` : ''}`;
@@ -724,15 +763,46 @@ function eventsCSV(evs){
   const head = ['Datum','Beginn','Ende','Treff','Art','Mannschaften','Gegner','Heim/Auswärts','Wettbewerb','Ort','Status','Ergebnis','Zusagen','Absagen'];
   return [head, ...evs.map(e => { const c = counts(e); return [e.datum.split('-').reverse().join('.'), e.zeit||'', e.ende||'', e.treff||'', typLabel(e), evTeams(e).map(t => S.teams[t]?.name||t).join(', '), e.typ==='spiel' ? e.gegner||'' : e.titel||'', e.typ==='spiel' ? (e.heim?'Heim':'Auswärts') : '', e.wettbewerb||'', e.ort||'', e.status||'', e.ergebnis||'', c.y, c.n]; })].map(r => r.map(csvCell).join(';')).join('\r\n');
 }
+function icsEsc(v){ return String(v||'').replace(/\\/g,'\\\\').replace(/;/g,'\;').replace(/,/g,'\\,').replace(/\n/g,'\\n'); }
+function toICS(evs){
+  const stamp = new Date().toISOString().replace(/[-:]/g,'').replace(/\.\d+/,'');
+  const L = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//SGSO Teamplaner//DE','CALSCALE:GREGORIAN','METHOD:PUBLISH','X-WR-CALNAME:'+icsEsc((S.club.name||'SGSO')+' Termine'),'X-WR-TIMEZONE:Europe/Berlin'];
+  evs.forEach(e => {
+    const d = e.datum.replace(/-/g,'');
+    L.push('BEGIN:VEVENT','UID:'+e.id+'@sgso-teamplaner','DTSTAMP:'+stamp);
+    if(e.zeit){ const end = e.ende || addMin(e.zeit, e.typ === 'spiel' ? 120 : 90); L.push('DTSTART:'+d+'T'+e.zeit.replace(':','')+'00', 'DTEND:'+(end < e.zeit ? addDays(e.datum,1).replace(/-/g,'') : d)+'T'+end.replace(':','')+'00'); }
+    else L.push('DTSTART;VALUE=DATE:'+d, 'DTEND;VALUE=DATE:'+addDays(e.datum,1).replace(/-/g,''));
+    const teams = evTeams(e).map(t => S.teams[t]?.kurz || t).join('/');
+    L.push('SUMMARY:'+icsEsc((teams ? teams+': ' : '')+(e.typ === 'spiel' ? (e.heim ? 'Heimspiel vs. ' : 'Auswärts bei ')+(e.gegner||'') : evTitle(e))));
+    if(e.ort) L.push('LOCATION:'+icsEsc(e.ort));
+    const desc = [e.treff ? 'Treffpunkt '+e.treff+' Uhr' : '', e.wettbewerb, e.notiz].filter(Boolean).join('\n');
+    if(desc) L.push('DESCRIPTION:'+icsEsc(desc));
+    if(e.status === 'abgesagt') L.push('STATUS:CANCELLED');
+    L.push('END:VEVENT');
+  });
+  L.push('END:VCALENDAR');
+  return L.join('\r\n');
+}
+function myUpcoming(){ const t = todayStr(); const ids = S.isStaff ? (S.meId ? [S.meId] : []) : S.myPlayers; return Object.entries(S.events).map(([id,e]) => ({id,...e})).filter(e => e.datum >= t && (!ids.length ? true : ids.some(pid => S.players[pid] && relevantFor(e, S.players[pid])))).sort((a,b) => (a.datum+(a.zeit||'')).localeCompare(b.datum+(b.zeit||''))); }
 function viewExport(){
-  return back + `<h2 style="font-size:24px">Export</h2>
-    <div class="card pad" style="display:flex;flex-direction:column;gap:8px"><b>Spielerliste</b><span class="small muted">Mit Kontaktdaten, als CSV für Excel (Semikolon getrennt).</span><div class="row">${DL ? `<button type="button" class="btn" data-act="dl" data-what="players">CSV herunterladen</button>` : ''}<button type="button" class="btn" data-act="copy" data-what="players">In Zwischenablage kopieren</button></div></div>
-    <div class="card pad" style="display:flex;flex-direction:column;gap:8px"><b>Terminliste</b><span class="small muted">Die Termine der aktuellen Auswahl im Reiter „Termine“ (${filteredEvents().length} Termine), inkl. Zu-/Absagen.</span><div class="row">${DL ? `<button type="button" class="btn" data-act="dl" data-what="events">CSV herunterladen</button>` : ''}<button type="button" class="btn" data-act="copy" data-what="events">In Zwischenablage kopieren</button></div></div>`;
+  return back + `<h2 style="font-size:24px">Export & Kalender</h2>
+    <div class="card pad" style="display:flex;flex-direction:column;gap:8px"><b>Meine Termine in den Handykalender</b><span class="small muted">${myUpcoming().length} kommende Termine als Kalenderdatei (.ics). Datei öffnen und „Alle hinzufügen“ wählen. Bei Änderungen neu exportieren.</span><div class="row"><button type="button" class="btn primary" data-act="icsme">Kalenderdatei laden</button></div></div>
+    ${S.canEdit ? `<div class="card pad" style="display:flex;flex-direction:column;gap:8px"><b>Spielerliste</b><span class="small muted">Mit Kontaktdaten, als CSV für Excel (Semikolon getrennt).</span><div class="row"><button type="button" class="btn" data-act="dl" data-what="players">CSV herunterladen</button><button type="button" class="btn" data-act="copy" data-what="players">Kopieren</button></div></div>` : ''}
+    <div class="card pad" style="display:flex;flex-direction:column;gap:8px"><b>Terminliste</b><span class="small muted">Die Termine der aktuellen Auswahl im Reiter „Termine“ (${filteredEvents().length} Termine), inkl. Zu-/Absagen.</span><div class="row"><button type="button" class="btn" data-act="dl" data-what="events">CSV herunterladen</button><button type="button" class="btn" data-act="icsfilter">Als Kalenderdatei</button></div></div>`;
+}
+function viewZugaenge(){
+  if(!S.isAdmin) return back + `<div class="card empty"><b>Nur für Admins</b></div>`;
+  if(S.roles === null){ return back + `<div class="empty"><b>Lädt…</b></div>`; }
+  const list = Object.entries(S.roles).sort((a,b) => a[0].localeCompare(b[0]));
+  return back + `<h2 style="font-size:24px">Zugänge verwalten</h2>
+    <div class="card pad small muted"><b style="color:var(--ink)">Trainer</b> sehen alle Mannschaften, Kontaktdaten und dürfen alles bearbeiten. <b style="color:var(--ink)">Admins</b> können zusätzlich Zugänge vergeben. Spieler und Eltern schaltest du beim Spielerprofil über „Login-E-Mails“ frei.</div>
+    <form class="card pad f" data-form="role"><div class="f2"><div class="fld"><label for="rMail">E-Mail</label><input id="rMail" name="mail" type="email" required placeholder="trainer@mail.de"></div><div class="fld"><label for="rRole">Rolle</label><select id="rRole" name="role"><option value="trainer">Trainer</option><option value="admin">Admin</option></select></div></div><button class="btn primary" type="submit">Freischalten</button></form>
+    <div class="card pad"><table><tbody>${list.map(([m,r]) => `<tr><td style="overflow-wrap:anywhere">${esc(m)}${m === S.email ? ' <span class="small muted">(du)</span>' : ''}</td><td><span class="pill ${r.role==='admin'?'p-spiel':'p-training'}">${esc(r.role==='admin'?'Admin':'Trainer')}</span></td><td class="num">${m === S.email ? '' : `<button type="button" class="btn small danger" data-act="roledel" data-id="${esc(m)}">Entziehen</button>`}</td></tr>`).join('')}</tbody></table></div>`;
 }
 function viewSettings(){
   const c = S.club; const m = me();
   let h = back + `<h2 style="font-size:24px">Einstellungen</h2>`;
-  h += `<div class="card pad" style="display:flex;flex-direction:column;gap:8px"><b>Das bin ich</b><span class="small muted">Bestimmt, welche Termine unter „Meine“ erscheinen. Gilt nur auf diesem Gerät.</span><div class="row"><span>${m ? esc(pName(m)) : 'Nicht gewählt'}</span><button type="button" class="btn small" data-act="whoami">Ändern</button></div></div>`;
+  h += `<div class="card pad" style="display:flex;flex-direction:column;gap:8px"><b>${S.isStaff ? 'Das bin ich' : 'Ausgewählter Spieler'}</b><span class="small muted">Bestimmt, welche Termine unter „Meine“ erscheinen.</span><div class="row"><span>${m ? esc(pName(m)) : 'Nicht gewählt'}</span><button type="button" class="btn small" data-act="whoami">Ändern</button></div></div>`;
   if(S.canEdit){
     h += `<form class="card pad f" data-form="club"><b>Verein</b>
       <div class="fld"><label for="cName">Vereinsname (kurz)</label><input id="cName" name="name" value="${esc(c.name)}" required></div>
@@ -741,7 +811,7 @@ function viewSettings(){
       <div class="fld"><label for="cTa">Treff vor Auswärtsspiel (Min.)</label><input id="cTa" name="treffAus" type="number" min="0" max="300" value="${esc(c.treffAus)}"></div></div>
       <button class="btn primary" type="submit">Speichern</button></form>`;
   }
-  h += `<div class="card pad small muted">${S.mode === 'db' ? (S.canEdit ? 'Du hast Bearbeitungsrechte: Änderungen sind sofort für alle sichtbar.' : 'Du siehst die App als Spieler. Zum Bearbeiten braucht dein Konto Bearbeitungsrechte (in claude.ai über „Teilen“ als Editor einladen).') : 'Lokaler Modus: Daten liegen nur in diesem Browser.'}</div>`;
+  h += `<div class="card pad" style="display:flex;flex-direction:column;gap:8px"><b>Konto</b><span class="small muted">Angemeldet als ${esc(S.email)} · ${S.isAdmin ? 'Admin' : S.isStaff ? 'Trainer' : 'Spieler/Eltern'}</span><div><button type="button" class="btn" data-act="logout">Abmelden</button></div></div>`;
   return h;
 }
 
@@ -772,23 +842,23 @@ function rsvpButtons(eid, pid, s, big){
 function sheetEvent(id){
   const e0 = S.events[id]; if(!e0) return ''; const e = {id, ...e0};
   const a = attOf(id); const m = me(); const ps = eventPlayers(e); const c = counts(e);
-  const canAtt = S.mode === 'local' || S.canEdit || !S.readOnlyHit;
+  const mineIds = (S.isStaff ? (S.meId ? [S.meId] : []) : S.myPlayers).filter(pid => S.players[pid] && relevantFor(e, S.players[pid]));
   let b = `<div class="row" style="gap:6px"><span class="pill p-${esc(e.typ)}">${esc(typLabel(e))}</span>${evTeams(e).map(tchip).join('')}${e.status==='abgesagt' ? '<span class="pill p-cancel">Abgesagt</span>' : ''}</div>`;
   b += `<dl class="kv"><dt>Datum</dt><dd>${esc(longDate(e.datum))}</dd><dt>Zeit</dt><dd>${esc(e.zeit ? e.zeit+(e.ende?'–'+e.ende:'')+' Uhr' : 'offen')}</dd>${e.treff ? `<dt>Treffpunkt</dt><dd><b>${esc(e.treff)} Uhr</b></dd>` : ''}${e.ort ? `<dt>Ort</dt><dd>${esc(e.ort)} · <a href="${esc(mapsLink(e.ort))}" target="_blank" rel="noopener">Karte</a></dd>` : ''}${e.typ==='spiel' ? `<dt>Gegner</dt><dd>${esc(e.gegner||'offen')} (${e.heim?'Heim':'Auswärts'})</dd>` : ''}${e.wettbewerb ? `<dt>Wettbewerb</dt><dd>${esc(e.wettbewerb)}</dd>` : ''}${e.ergebnis ? `<dt>Ergebnis</dt><dd><b>${esc(e.ergebnis)}</b></dd>` : ''}${e.notiz ? `<dt>Info</dt><dd style="white-space:pre-wrap">${esc(e.notiz)}</dd>` : ''}<dt>Quelle</dt><dd class="small muted">${esc(e.quelle === 'fussball.de' ? 'fussball.de-Import' : e.quelle === 'serie' ? 'Trainingsserie' : 'manuell angelegt')}</dd></dl>`;
-  if(m && relevantFor(e, m) && e.status !== 'abgesagt'){
-    const mine = a[S.meId] || {};
-    b += `<div class="card pad hl" style="display:flex;flex-direction:column;gap:8px"><b>Deine Rückmeldung</b>${canAtt ? rsvpButtons(id, S.meId, mine.s, true) : `<span class="small">Rückmeldungen trägt dein Trainer ein. Status: ${mine.s==='y'?'zugesagt':mine.s==='n'?'abgesagt':mine.s==='m'?'unsicher':'offen'}</span>`}
-      ${canAtt && (mine.s === 'n' || mine.s === 'm') ? `<div class="fld"><label for="attReason">Grund (optional)</label><input id="attReason" value="${esc(mine.r||'')}" placeholder="z. B. krank, Schule, Urlaub" data-reason-e="${esc(id)}" data-reason-p="${esc(S.meId)}"></div>` : ''}</div>`;
+  if(mineIds.length && e.status !== 'abgesagt'){
+    b += mineIds.map(pid => { const mine = a[pid] || {}; return `<div class="card pad hl" style="display:flex;flex-direction:column;gap:8px"><b>${mineIds.length > 1 || pid !== S.meId ? 'Rückmeldung für ' + esc(pName(S.players[pid])) : 'Deine Rückmeldung'}</b>${rsvpButtons(id, pid, mine.s, true)}
+      ${mine.s === 'n' || mine.s === 'm' ? `<div class="fld"><label for="attReason-${esc(pid)}">Grund (optional)</label><input id="attReason-${esc(pid)}" value="${esc(mine.r||'')}" placeholder="z. B. krank, Schule, Urlaub" data-reason-e="${esc(id)}" data-reason-p="${esc(pid)}"></div>` : ''}</div>`; }).join('');
   }
   b += `<div class="card pad"><div class="row between" style="margin-bottom:4px"><b>Rückmeldungen</b><span class="small"><span style="color:var(--ok)">✓ ${c.y}</span> · <span style="color:var(--no)">✗ ${c.n}</span> · <span style="color:var(--maybe)">? ${c.m}</span> · offen ${c.o}</span></div>`;
   if(!ps.length) b += `<div class="small muted">Diesen Mannschaften sind noch keine Spieler zugeordnet.</div>`;
-  b += ps.map(p => { const v = a[p.id] || {}; return `<div class="att"><div><span${p.id===S.meId?' style="font-weight:700"':''}>${esc(pName(p))}</span>${STAFF.includes(p.rolle) ? ` <span class="small muted">${esc(p.rolle)}</span>` : ''}${v.r ? `<div class="small muted">${esc(v.r)}</div>` : ''}</div>${S.canEdit || S.mode==='local' ? rsvpButtons(id, p.id, v.s, false) : `<span class="pill p-${v.s==='y'?'y':v.s==='n'?'n':v.s==='m'?'m':'o'}">${v.s==='y'?'Zu':v.s==='n'?'Ab':v.s==='m'?'?':'offen'}</span>`}</div>`; }).join('');
+  b += ps.map(p => { const v = a[p.id] || {}; return `<div class="att"><div><span${p.id===S.meId?' style="font-weight:700"':''}>${esc(pName(p))}</span>${STAFF.includes(p.rolle) ? ` <span class="small muted">${esc(p.rolle)}</span>` : ''}${v.r ? `<div class="small muted">${esc(v.r)}</div>` : ''}</div>${S.canEdit ? rsvpButtons(id, p.id, v.s, false) : `<span class="pill p-${v.s==='y'?'y':v.s==='n'?'n':v.s==='m'?'m':'o'}">${v.s==='y'?'Zu':v.s==='n'?'Ab':v.s==='m'?'?':'offen'}</span>`}</div>`; }).join('');
   b += `</div>`;
   const dienste = e.dienste || [];
   if(dienste.length || S.canEdit){
     b += `<div class="card pad" style="display:flex;flex-direction:column;gap:8px"><b>Dienste</b>${dienste.length ? dienste.map((d,i) => `<div class="row between"><span>${esc(d.name)}: <b>${esc(pName(S.players[d.pid]))}</b></span>${S.canEdit ? `<button type="button" class="btn small" data-act="dienstdel" data-id="${esc(id)}" data-i="${i}">Entfernen</button>` : ''}</div>`).join('') : '<span class="small muted">Noch keine Dienste eingeteilt.</span>'}
     ${S.canEdit ? `<div class="f2"><select id="dName" aria-label="Dienst">${DIENSTE.map(d => `<option>${esc(d)}</option>`).join('')}</select><select id="dPid" aria-label="Person">${ps.map(p => `<option value="${esc(p.id)}">${esc(pName(p))}</option>`).join('')}</select></div><button type="button" class="btn small" data-act="dienstadd" data-id="${esc(id)}" ${ps.length?'':'disabled'}>Dienst einteilen</button>` : ''}</div>`;
   }
+  b += `<div class="row"><button type="button" class="btn" data-act="ics1" data-id="${esc(id)}">In meinen Kalender (.ics)</button></div>`;
   if(S.canEdit){
     b += `<div class="row"><button type="button" class="btn primary" data-act="evedit" data-id="${esc(id)}">Bearbeiten</button><button type="button" class="btn" data-act="evcancel" data-id="${esc(id)}">${e.status==='abgesagt'?'Wieder ansetzen':'Absagen'}</button><button type="button" class="btn" data-act="evcopy" data-id="${esc(id)}">Kopieren</button><button type="button" class="btn danger" data-act="evdel" data-id="${esc(id)}">Löschen</button>${e.serieId ? `<button type="button" class="btn danger" data-act="seriedel" data-id="${esc(id)}">Serie ab hier löschen</button>` : ''}</div>`;
   }
@@ -823,16 +893,17 @@ function sheetPlayer(id){
   const evs = Object.entries(S.events).map(([eid,e]) => ({id:eid,...e})).filter(e => relevantFor(e, p) && e.datum < t0 && e.datum >= from && e.status !== 'abgesagt');
   const y = evs.filter(e => attOf(e.id)[id]?.s === 'y').length;
   const fits = (p.teams||[]).map(t => ({t, f:teamFit(S.teams[t], p.geb)})).filter(x => x.f);
-  const showC = S.canEdit || S.mode === 'local';
+  const showC = S.canEdit;
   let b = `<div class="row" style="gap:5px">${(p.teams||[]).map(tchip).join('')}<span class="pill p-training">${esc(p.rolle||'Spieler')}</span>${p.status==='inaktiv'?'<span class="pill p-o">inaktiv</span>':''}</div>`;
   b += `<dl class="kv">${p.geb ? `<dt>Geburtstag</dt><dd>${esc(p.geb.split('-').reverse().join('.'))} (${age} Jahre)</dd>` : ''}${p.nummer ? `<dt>Rückennr.</dt><dd>${esc(p.nummer)}</dd>` : ''}
     ${showC && c.tel ? `<dt>Telefon</dt><dd><a href="tel:${esc(c.tel.replace(/[^\d+]/g,''))}">${esc(c.tel)}</a></dd>` : ''}${showC && c.mail ? `<dt>E-Mail</dt><dd><a href="mailto:${esc(c.mail)}">${esc(c.mail)}</a></dd>` : ''}
     ${showC && (c.eltern || c.elternTel || c.elternMail) ? `<dt>Eltern</dt><dd>${esc(c.eltern||'')}${c.elternTel ? '<br><a href="tel:'+esc(c.elternTel.replace(/[^\d+]/g,''))+'">'+esc(c.elternTel)+'</a>' : ''}${c.elternMail ? '<br><a href="mailto:'+esc(c.elternMail)+'">'+esc(c.elternMail)+'</a>' : ''}</dd>` : ''}
+    ${showC && (c.loginEmails||[]).length ? `<dt>App-Zugang</dt><dd>${esc(c.loginEmails.join(', '))}</dd>` : ''}${showC && !(c.loginEmails||[]).length ? `<dt>App-Zugang</dt><dd class="warn">keine Login-E-Mail hinterlegt</dd>` : ''}
     ${p.notiz && showC ? `<dt>Notiz</dt><dd style="white-space:pre-wrap">${esc(p.notiz)}</dd>` : ''}
     <dt>Beteiligung</dt><dd>${evs.length ? `${y} von ${evs.length} Terminen zugesagt (90 Tage)` : 'noch keine Termine'}</dd></dl>`;
   if(fits.length) b += `<div class="small">${fits.map(x => `<div>${esc(S.teams[x.t]?.name||'')}: <span class="${x.f.lvl==='warn'?'warn':'muted'}">${esc(x.f.txt)}</span></div>`).join('')}</div>`;
-  b += `<div class="row"><button type="button" class="btn ${S.meId===id?'':'primary'}" data-act="setme" data-id="${esc(id)}">${S.meId===id ? 'Das bist du' : 'Das bin ich'}</button>${S.canEdit ? `<button type="button" class="btn" data-act="plink" data-id="${esc(id)}">Persönlichen Link kopieren</button><button type="button" class="btn" data-act="pedit" data-id="${esc(id)}">Bearbeiten</button><button type="button" class="btn danger" data-act="pdel" data-id="${esc(id)}">Löschen</button>` : ''}</div>`;
-  if(S.canEdit) b += `<div class="small muted">Der persönliche Link öffnet die App direkt mit „Meine Termine“ für diese Person.</div>`;
+  b += `<div class="row">${S.isStaff || S.myPlayers.includes(id) ? `<button type="button" class="btn ${S.meId===id?'':'primary'}" data-act="setme" data-id="${esc(id)}">${S.meId===id ? 'Ausgewählt' : (S.isStaff ? 'Das bin ich' : 'Auswählen')}</button>` : ''}${S.canEdit ? `<button type="button" class="btn" data-act="pinvite" data-id="${esc(id)}">Einladung kopieren</button><button type="button" class="btn" data-act="pedit" data-id="${esc(id)}">Bearbeiten</button><button type="button" class="btn danger" data-act="pdel" data-id="${esc(id)}">Löschen</button>` : ''}</div>`;
+  if(S.canEdit) b += `<div class="small muted">„Einladung kopieren“ erzeugt einen Text mit Link und Login-E-Mail zum Weiterleiten per WhatsApp oder Mail.</div>`;
   return sheetWrap(pName(p), b);
 }
 function sheetPForm(id){
@@ -846,6 +917,7 @@ function sheetPForm(id){
     <div class="f2"><div class="fld"><label for="pR">Rolle</label><select id="pR" name="rolle">${ROLES.map(r => `<option ${p.rolle===r?'selected':''}>${r}</option>`).join('')}</select></div><div class="fld"><label for="pS">Status</label><select id="pS" name="status"><option value="aktiv" ${p.status!=='inaktiv'?'selected':''}>aktiv</option><option value="inaktiv" ${p.status==='inaktiv'?'selected':''}>inaktiv / pausiert</option></select></div></div>
     <b style="margin-top:4px">Kontakt <span class="small muted" style="font-weight:400">nur für Trainer sichtbar</span></b>
     <div class="f2"><div class="fld"><label for="pT">Telefon</label><input id="pT" name="tel" type="tel" value="${esc(c.tel||'')}"></div><div class="fld"><label for="pM">E-Mail</label><input id="pM" name="mail" type="email" value="${esc(c.mail||'')}"></div></div>
+    <div class="fld"><label for="pLog">Login-E-Mails für die App</label><input id="pLog" name="loginEmails" value="${esc((c.loginEmails||[]).join(', '))}" placeholder="spieler@mail.de, mutter@mail.de"><span class="small muted">Wer sich mit einer dieser Adressen anmeldet, sieht die Termine dieses Spielers und kann zu- oder absagen. Bei Jugendspielern auch die Eltern eintragen.</span></div>
     <details class="help" ${minor || c.eltern ? 'open' : ''}><summary>Erziehungsberechtigte</summary><div class="f" style="margin-top:8px"><div class="fld"><label for="pEl">Name</label><input id="pEl" name="eltern" value="${esc(c.eltern||'')}"></div><div class="f2"><div class="fld"><label for="pElT">Telefon</label><input id="pElT" name="elternTel" type="tel" value="${esc(c.elternTel||'')}"></div><div class="fld"><label for="pElM">E-Mail</label><input id="pElM" name="elternMail" type="email" value="${esc(c.elternMail||'')}"></div></div></div></details>
     <div class="fld"><label for="pNo">Notiz (nur Trainer)</label><textarea id="pNo" name="notiz" placeholder="z. B. Spielberechtigung beantragt, Allergie Bienen">${esc(p.notiz||'')}</textarea></div>
     <button class="btn primary" type="submit">Speichern</button></form>`;
@@ -877,11 +949,11 @@ function sheetSerie(teamId){
   return sheetWrap('Trainings · ' + t.name, b);
 }
 function sheetWho(){
-  const ps = Object.entries(S.players).map(([id,p]) => ({id,...p})).filter(p => p.status !== 'inaktiv').sort((a,b) => a.name.localeCompare(b.name) || a.vorname.localeCompare(b.vorname));
+  const ps = Object.entries(S.players).map(([id,p]) => ({id,...p})).filter(p => p.status !== 'inaktiv' && (S.isStaff || S.myPlayers.includes(p.id))).sort((a,b) => a.name.localeCompare(b.name) || a.vorname.localeCompare(b.vorname));
   const b = `<div class="small muted">Wähle deinen Namen. Danach zeigt „Meine“ nur Termine deiner Mannschaften. Die Auswahl gilt auf diesem Gerät.</div>
     <input class="search" id="whoQ" type="search" placeholder="Name suchen" aria-label="Name suchen">
     <div class="list" id="whoList">${ps.map(p => `<button type="button" class="prow" data-act="setme" data-id="${esc(p.id)}" data-name="${esc(pName(p).toLowerCase())}"><div class="ava" style="--tc:${esc(firstTeamColor(p.teams))}">${esc(((p.vorname||'')[0]||'')+((p.name||'')[0]||''))}</div><div><div class="pname">${esc(pName(p))}</div><div>${(p.teams||[]).map(tchip).join(' ')}</div></div><span>${S.meId===p.id?'✓':''}</span></button>`).join('') || '<div class="empty">Noch keine Spieler angelegt.</div>'}</div>
-    ${S.meId ? `<button type="button" class="btn" data-act="setme" data-id="">Auswahl entfernen</button>` : ''}`;
+    ${S.meId && S.isStaff ? `<button type="button" class="btn" data-act="setme" data-id="">Auswahl entfernen</button>` : ''}`;
   return sheetWrap('Wer bist du?', b);
 }
 function askConfirm(text, yesLabel, fn){
@@ -925,8 +997,20 @@ document.addEventListener('click', async ev => {
       case 'player': openSheet('player', id); break;
       case 'pnew': openSheet('pform', null); break;
       case 'pedit': openSheet('pform', id); break;
-      case 'pdel': askConfirm(`${pName(S.players[id])} mit Kontaktdaten löschen?`, 'Löschen', async () => { await del('players', id); if(S.contacts[id]) await del('contacts', id); if(S.meId === id) setMe(null); closeSheet(); toast('Gelöscht.'); }); break;
-      case 'plink': { if(APP_URL.startsWith('http')) await copyText(APP_URL + '#p-' + id, 'Persönlicher Link kopiert. Per WhatsApp oder Mail weitergeben.'); else toast('Link erst nach dem Veröffentlichen verfügbar.'); break; }
+      case 'pdel': askConfirm(`${pName(S.players[id])} mit Kontaktdaten löschen?`, 'Löschen', async () => { const lg = (S.contacts[id] && S.contacts[id].loginEmails) || []; await syncLogins(id, lg, []); await del('players', id); if(S.contacts[id]) await del('contacts', id); if(S.meId === id) setMe(null); closeSheet(); toast('Gelöscht.'); }); break;
+      case 'pinvite': { const p = S.players[id]; const lg = (S.contacts[id] && S.contacts[id].loginEmails) || []; if(!lg.length){ toast('Erst beim Spieler eine Login-E-Mail eintragen.'); break; }
+        await copyText(`Hallo ${p.vorname}, ab sofort findest du alle Termine von ${S.club.name || 'SGSO'} im Teamplaner: ${APP_URL}\n\nSo geht's: Link öffnen, „Mit Google anmelden“ oder „Konto anlegen“ wählen und dafür diese E-Mail verwenden: ${lg.join(' oder ')}\nDann bei jedem Termin zu- oder absagen. Tipp: Seite zum Startbildschirm hinzufügen.`, 'Einladung kopiert. Per WhatsApp oder Mail weitergeben.'); break; }
+      case 'authgoogle': { S.authMsg = ''; const prov = new GoogleAuthProvider(); prov.setCustomParameters({prompt:'select_account'}); try { await signInWithPopup(auth, prov); } catch(e){ if(e && (e.code === 'auth/popup-blocked' || e.code === 'auth/operation-not-supported-in-this-environment')) await signInWithRedirect(auth, prov); else { S.authMsg = authErr(e); render(); } } break; }
+      case 'authmode': S.authMode = S.authMode === 'register' ? 'login' : 'register'; S.authMsg = ''; render(); break;
+      case 'authreset': { const m = ($('#aMail') && $('#aMail').value.trim()) || ''; if(!m){ S.authMsg = 'Bitte zuerst die E-Mail-Adresse eintragen.'; render(); break; } try { await sendPasswordResetEmail(auth, m); S.authMsg = 'Link zum Zurücksetzen wurde an ' + m + ' gesendet (auch im Spam schauen).'; } catch(e){ S.authMsg = authErr(e); } S.loginEmail = m; render(); break; }
+      case 'authcheck': { if(auth.currentUser){ await auth.currentUser.reload(); S.authMsg = ''; await resolveAccess(); if(S.auth === 'verify'){ S.authMsg = 'Noch nicht bestätigt. Bitte den Link in der E-Mail öffnen.'; render(); } } break; }
+      case 'authresend': { try { await sendEmailVerification(auth.currentUser, {url: APP_URL}); S.authMsg = 'Bestätigungslink erneut gesendet.'; } catch(e){ S.authMsg = authErr(e); } render(); break; }
+      case 'authsetup': { el.disabled = true; try { await doSetup(); } catch(e){ console.error(e); S.authMsg = 'Einrichtung fehlgeschlagen. Sind die Firestore-Regeln veröffentlicht?'; render(); } break; }
+      case 'logout': closeSheet(); await signOut(auth); break;
+      case 'roledel': askConfirm(`Zugang für ${id} entziehen?`, 'Entziehen', async () => { await deleteDoc(doc(fs, 'roles', id)); await loadRoles(); }); break;
+      case 'ics1': { const e = S.events[id]; downloadFile('termin-' + e.datum + '.ics', toICS([{id, ...e}])); break; }
+      case 'icsme': { const evs = myUpcoming(); if(!evs.length){ toast('Keine kommenden Termine.'); break; } downloadFile('meine-termine.ics', toICS(evs)); break; }
+      case 'icsfilter': { const evs = filteredEvents(); if(!evs.length){ toast('Keine Termine in der Auswahl.'); break; } downloadFile('termine.ics', toICS(evs)); break; }
       case 'setme': setMe(id || null); closeSheet(); toast(id ? 'Hallo ' + S.players[id].vorname + '! „Meine“ zeigt jetzt deine Termine.' : 'Auswahl entfernt.'); if(id){ S.f.scope = 'meine'; } render(); break;
       case 'whoami': openSheet('whoami'); setTimeout(() => $('#whoQ') && $('#whoQ').focus(), 50); break;
       case 'seedteams': await batch(Object.entries(DEFAULT_TEAMS), ([k,t]) => put('teams', k, t)); toast('Mannschaften angelegt.'); break;
@@ -936,7 +1020,7 @@ document.addEventListener('click', async ev => {
       case 'teamplayers': S.view = 'spieler'; S.pf.team = id; render(); break;
       case 'serie': openSheet('serie', id); break;
       case 'importteam': S.view = 'mehr'; S.sub = 'import'; S.imp.team = id; render(); break;
-      case 'sub': S.view = 'mehr'; S.sub = el.dataset.sub || null; render(); $('#main').scrollTop = 0; break;
+      case 'sub': S.view = 'mehr'; S.sub = el.dataset.sub || null; if(S.sub === 'zugaenge'){ S.roles = null; loadRoles(); } render(); $('#main').scrollTop = 0; break;
       case 'impparse': { const rows = parseFbText(S.imp.text, ownKeys(S.club)); S.imp.rows = classifyRows(rows, S.imp.team); toast(rows.length ? rows.length + ' Spiele erkannt.' : 'Keine Spiele erkannt. Text prüfen oder „Mit Claude erkennen“ nutzen.'); render(); break; }
       case 'impai': await aiParse(); break;
       case 'impdo': await doImport(); break;
@@ -977,6 +1061,19 @@ document.addEventListener('submit', async ev => {
   const f = ev.target; if(!f.dataset.form) return; ev.preventDefault();
   const d = formData(f); const id = f.dataset.id; const btn = f.querySelector('[type=submit]'); if(btn) btn.disabled = true;
   try {
+    if(f.dataset.form === 'login' || f.dataset.form === 'register'){
+      S.loginEmail = d.mail; S.authMsg = '';
+      try {
+        if(f.dataset.form === 'register'){ const cred = await createUserWithEmailAndPassword(auth, d.mail, d.pw); await sendEmailVerification(cred.user, {url: APP_URL}); }
+        else await signInWithEmailAndPassword(auth, d.mail, d.pw);
+      } catch(e){ S.authMsg = authErr(e); render(); }
+      return;
+    }
+    if(f.dataset.form === 'role'){
+      const m = parseMails(d.mail)[0]; if(!m){ toast('Bitte eine gültige E-Mail eingeben.'); return; }
+      await setDoc(doc(fs, 'roles', m), {role: d.role === 'admin' ? 'admin' : 'trainer', at: Date.now(), by: S.email});
+      f.reset(); toast(m + ' ist jetzt ' + (d.role === 'admin' ? 'Admin.' : 'Trainer.')); await loadRoles(); return;
+    }
     if(f.dataset.form === 'event'){
       if(!d.teams.length){ toast('Bitte mindestens eine Mannschaft wählen.'); return; }
       const base = id ? clone(S.events[id]) : {status:'geplant', quelle:'manuell', dienste:[]};
@@ -987,9 +1084,11 @@ document.addEventListener('submit', async ev => {
     } else if(f.dataset.form === 'player'){
       const base = id ? clone(S.players[id]) : {};
       const p = {...base, vorname:d.vorname, name:d.name, geb:d.geb||'', teams:d.teams, rolle:d.rolle||'Spieler', nummer:d.nummer||'', status:d.status||'aktiv', notiz:d.notiz||''};
-      const c = {tel:d.tel||'', mail:d.mail||'', eltern:d.eltern||'', elternTel:d.elternTel||'', elternMail:d.elternMail||''};
+      const oldLogins = (id && S.contacts[id] && S.contacts[id].loginEmails) || [];
+      const c = {tel:d.tel||'', mail:d.mail||'', eltern:d.eltern||'', elternTel:d.elternTel||'', elternMail:d.elternMail||'', loginEmails: parseMails(d.loginEmails)};
       const nid = id || uid(); await put('players', nid, p);
-      if(Object.values(c).some(Boolean) || S.contacts[nid]) await put('contacts', nid, c);
+      if(c.tel || c.mail || c.eltern || c.elternTel || c.elternMail || c.loginEmails.length || S.contacts[nid]) await put('contacts', nid, c);
+      await syncLogins(nid, oldLogins, c.loginEmails);
       toast('Gespeichert.'); openSheet('player', nid);
     } else if(f.dataset.form === 'team'){
       const base = id ? clone(S.teams[id]) : {order: teamList().length + 1};
@@ -1022,58 +1121,126 @@ async function doPImport(){
   const rows = parsePlayersCSV(S.pimp.text); if(!rows.length) return;
   const exist = new Set(Object.values(S.players).map(p => norm(p.vorname+p.name+(p.geb||''))));
   const fresh = rows.filter(r => !exist.has(norm(r.vorname+r.name+(r.geb||''))));
-  await batch(fresh, async r => { const id = uid(); await put('players', id, {vorname:r.vorname, name:r.name, geb:r.geb, teams:matchTeams(r.teamsRaw, S.teams), rolle:'Spieler', nummer:'', status:'aktiv', notiz:''}); if(r.tel || r.mail) await put('contacts', id, {tel:r.tel, mail:r.mail, eltern:'', elternTel:'', elternMail:''}); });
+  await batch(fresh, async r => { const id = uid(); await put('players', id, {vorname:r.vorname, name:r.name, geb:r.geb, teams:matchTeams(r.teamsRaw, S.teams), rolle:'Spieler', nummer:'', status:'aktiv', notiz:''}); const lg = parseMails(r.mail); if(r.tel || r.mail) await put('contacts', id, {tel:r.tel, mail:r.mail, eltern:'', elternTel:'', elternMail:'', loginEmails: lg}); if(lg.length) await syncLogins(id, [], lg); });
   toast(fresh.length + ' Personen übernommen' + (rows.length > fresh.length ? ', ' + (rows.length-fresh.length) + ' bereits vorhanden.' : '.'));
   S.pimp.text = ''; S.view = 'spieler'; S.sub = null; render();
 }
 function setMe(id){ S.meId = id; if(id) lsSet('sgso-me', id); else { try { localStorage.removeItem('sgso-me'); } catch(e){} } }
 
-/* ---------- start ---------- */
+/* ---------- Anmeldung & Start ---------- */
 function readHash(){
   const h = (location.hash || '').slice(1);
-  if(/^p-[A-Za-z0-9]+$/.test(h)){ S.meId = h.slice(2); lsSet('sgso-me', S.meId); S.f.scope = 'meine'; S.view = 'termine'; }
-  else if(['termine','spieler','teams','mehr'].includes(h)) S.view = h;
+  if(['termine','spieler','teams','mehr'].includes(h)) S.view = h;
 }
 window.addEventListener('hashchange', () => { readHash(); render(); });
-function startLocal(){
-  S.mode = 'local';
-  let saved = null; try { saved = JSON.parse(lsGet(LS_KEY) || 'null'); } catch(e){}
-  if(saved){ S.club = {...DEFAULT_CLUB, ...(saved.club||{})}; COLS.forEach(c => S[c] = saved[c] || {}); }
-  else {
-    S.teams = clone(DEFAULT_TEAMS);
-    const t = todayStr(); const s = seasonStart();
-    S.players = {
-      d1:{vorname:'Beispiel', name:'Torwart', geb:(s-13)+'-03-14', teams:['c'], rolle:'Torwart', nummer:'1', status:'aktiv'},
-      d2:{vorname:'Beispiel', name:'Stürmer', geb:'1988-08-02', teams:['herren','ah'], rolle:'Spieler', nummer:'9', status:'aktiv'},
-      d3:{vorname:'Beispiel', name:'Trainerin', geb:'1979-05-21', teams:['c','b'], rolle:'Trainer', status:'aktiv'},
-    };
-    S.events = {
-      e1:{typ:'training', titel:'Training', teams:['c'], datum:addDays(t,1), zeit:'17:00', ende:'18:30', ort:'Sportplatz', status:'geplant', quelle:'manuell'},
-      e2:{typ:'spiel', teams:['herren'], datum:addDays(t,4), zeit:'14:00', treff:'13:00', heim:true, gegner:'Beispiel SV', wettbewerb:'Kreisoberliga', ort:'Sportplatz', status:'geplant', quelle:'manuell'},
-    };
-  }
-  S.canEdit = true; S.attWrite = true;
-  const sm = lsGet('sgso-me'); if(!S.meId && sm) S.meId = sm;
-  render();
+
+function authErr(e){
+  const c = (e && e.code) || '';
+  if(c.includes('invalid-credential') || c.includes('wrong-password') || c.includes('user-not-found')) return 'E-Mail oder Passwort stimmt nicht.';
+  if(c.includes('email-already-in-use')) return 'Für diese E-Mail gibt es schon ein Konto. Bitte anmelden oder Passwort zurücksetzen.';
+  if(c.includes('weak-password')) return 'Das Passwort braucht mindestens 6 Zeichen.';
+  if(c.includes('invalid-email')) return 'Die E-Mail-Adresse ist ungültig.';
+  if(c.includes('too-many-requests')) return 'Zu viele Versuche. Bitte ein paar Minuten warten.';
+  if(c.includes('popup-closed') || c.includes('cancelled-popup')) return 'Anmeldung abgebrochen.';
+  if(c.includes('unauthorized-domain')) return 'Diese Adresse ist in Firebase nicht freigegeben (Authentication → Einstellungen → Autorisierte Domains).';
+  if(c.includes('operation-not-allowed')) return 'Diese Anmeldeart ist in Firebase noch nicht aktiviert.';
+  return 'Anmeldung fehlgeschlagen. Bitte erneut versuchen.';
 }
-async function init(){
+function viewAuth(){
+  const crest = `<div class="crest" style="width:56px;height:56px;font-size:20px;border-radius:14px">${esc(String(S.club.name||'SG').replace(/[^A-Za-zÄÖÜ]/g,'').slice(0,4).toUpperCase())}</div>`;
+  const head = `<div class="row" style="gap:14px">${crest}<div><h2 style="font-size:28px">${esc(S.club.name || 'SGSO')} Teamplaner</h2><div class="muted small">Termine, Kader und Zusagen deiner Mannschaft</div></div></div>`;
+  const msg = S.authMsg ? `<div class="banner">${esc(S.authMsg)}</div>` : '';
+  if(S.auth === 'loading') return `<div class="empty"><b>Lädt…</b></div>`;
+  if(S.auth === 'verify') return `${head}${msg}<div class="card pad" style="display:flex;flex-direction:column;gap:10px"><b>E-Mail bestätigen</b><span>Wir haben einen Bestätigungslink an <b>${esc(S.email)}</b> geschickt. Bitte den Link öffnen (auch im Spam-Ordner schauen) und dann hier tippen:</span><button type="button" class="btn primary" data-act="authcheck">Ich habe bestätigt</button><div class="row"><button type="button" class="btn small" data-act="authresend">Link erneut senden</button><button type="button" class="btn small" data-act="logout">Abmelden</button></div></div>`;
+  if(S.auth === 'setup') return `${head}${msg}<div class="card pad" style="display:flex;flex-direction:column;gap:10px"><b>Ersteinrichtung</b><span>Die App ist noch leer. Du wirst als <b>Vereins-Admin</b> eingetragen (${esc(S.email)}) und die Mannschaften Männer, Alte Herren, A-, B- und C-Jugend werden angelegt. Danach kannst du Trainer freischalten und Spieler einladen.</span><button type="button" class="btn primary" data-act="authsetup">Als Admin einrichten</button><button type="button" class="btn small" data-act="logout">Abmelden</button></div>`;
+  if(S.auth === 'noaccess') return `${head}${msg}<div class="card pad" style="display:flex;flex-direction:column;gap:10px"><b>Noch nicht freigeschaltet</b><span>Du bist als <b>${esc(S.email)}</b> angemeldet, aber diese E-Mail ist noch keinem Spieler zugeordnet. Bitte deinem Trainer genau diese Adresse geben. Er trägt sie beim Spieler unter „Login-E-Mails“ ein.</span><button type="button" class="btn primary" data-act="authcheck">Erneut prüfen</button><button type="button" class="btn small" data-act="logout">Mit anderer E-Mail anmelden</button></div>`;
+  const reg = S.authMode === 'register';
+  return `${head}${msg}
+    <div class="card pad" style="display:flex;flex-direction:column;gap:12px">
+      <button type="button" class="btn primary block" data-act="authgoogle"><svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>Mit Google anmelden</button>
+      <div class="row" style="gap:10px"><span style="flex:1;height:1px;background:var(--line)"></span><span class="small muted">oder mit E-Mail</span><span style="flex:1;height:1px;background:var(--line)"></span></div>
+      <form class="f" data-form="${reg ? 'register' : 'login'}">
+        <div class="fld"><label for="aMail">E-Mail</label><input id="aMail" name="mail" type="email" autocomplete="email" required value="${esc(S.loginEmail||'')}"></div>
+        <div class="fld"><label for="aPw">Passwort${reg ? ' (mind. 6 Zeichen)' : ''}</label><input id="aPw" name="pw" type="password" autocomplete="${reg ? 'new-password' : 'current-password'}" required minlength="6"></div>
+        <button class="btn primary" type="submit">${reg ? 'Konto anlegen' : 'Anmelden'}</button>
+      </form>
+      <div class="row between small"><button type="button" class="back" data-act="authmode">${reg ? 'Ich habe schon ein Konto' : 'Neu hier? Konto anlegen'}</button>${reg ? '' : '<button type="button" class="back" data-act="authreset">Passwort vergessen</button>'}</div>
+    </div>
+    <div class="small muted">Zugang bekommst du über deinen Trainer: Er hinterlegt deine E-Mail (oder die deiner Eltern) beim Spielerprofil. Melde dich mit genau dieser Adresse an.</div>`;
+}
+async function resolveAccess(){
+  const u = auth.currentUser; if(!u){ S.auth = 'out'; render(); return; }
+  S.email = (u.email || '').toLowerCase();
+  if(!u.emailVerified){ S.auth = 'verify'; render(); return; }
+  try {
+    await u.getIdToken(true);
+    const [r, l, setup] = await Promise.all([getDoc(doc(fs, 'roles', S.email)), getDoc(doc(fs, 'logins', S.email)), getDoc(doc(fs, 'config', 'setup'))]);
+    S.role = r.exists() ? (r.data().role || 'trainer') : null;
+    S.isStaff = !!S.role; S.isAdmin = S.role === 'admin'; S.canEdit = S.isStaff;
+    S.myPlayers = l.exists() ? (l.data().playerIds || []) : [];
+    if(!S.isStaff && !S.myPlayers.length){ S.auth = setup.exists() ? 'noaccess' : 'setup'; render(); return; }
+  } catch(e){ console.error(e); S.authMsg = 'Zugriff auf die Vereinsdaten nicht möglich. Sind die Firestore-Regeln veröffentlicht?'; S.auth = 'noaccess'; render(); return; }
+  S.authMsg = ''; S.auth = 'in'; S.mode = 'db';
+  const sm = lsGet('sgso-me');
+  if(S.isStaff) S.meId = sm || null;
+  else S.meId = S.myPlayers.includes(sm) ? sm : S.myPlayers[0];
+  S.f.scope = S.isStaff && !S.meId ? 'alle' : 'meine';
+  subscribeAll(); render();
+}
+async function doSetup(){
+  const b = writeBatch(fs);
+  b.set(doc(fs, 'roles', S.email), {role:'admin', at:Date.now()});
+  b.set(doc(fs, 'config', 'setup'), {done:true, at:Date.now(), by:S.email});
+  await b.commit();
+  await auth.currentUser.getIdToken(true);
+  const b2 = writeBatch(fs);
+  Object.entries(DEFAULT_TEAMS).forEach(([k,t]) => b2.set(doc(fs, 'teams', k), t));
+  b2.set(doc(fs, 'config', 'club'), {...DEFAULT_CLUB});
+  await b2.commit();
+  await resolveAccess();
+}
+let unsubs = [], evUnsubs = [], teamKey = null;
+function myTeamIds(){ const t = new Set(); S.myPlayers.forEach(pid => (S.players[pid]?.teams || []).forEach(x => t.add(x))); return [...t].sort(); }
+function stopAll(){ unsubs.concat(evUnsubs).forEach(u => { try { u(); } catch(e){} }); unsubs = []; evUnsubs = []; teamKey = null; }
+function subscribeAll(){
+  stopAll();
+  const pending = new Set(['teams','players','events']);
+  const timer = setTimeout(() => { if(pending.size){ S.note = 'Die Vereinsdaten sind noch nicht erreichbar. Verbindung prüfen; Angezeigtes ist eventuell nicht aktuell.'; scheduleRender(); } }, 10000);
+  const loaded = (k, snap) => { if(!snap.metadata.fromCache && pending.delete(k) && !pending.size){ clearTimeout(timer); if(S.note.startsWith('Die Vereinsdaten')) S.note = ''; scheduleRender(); } };
+  const onErr = col => e => { console.error(col, e); S.note = e.code === 'permission-denied' ? 'Keine Leserechte für „'+col+'“. Firestore-Regeln prüfen.' : 'Verbindung unterbrochen. Seite neu laden.'; scheduleRender(); };
+  const listen = (q, col, list) => (list || unsubs).push(onSnapshot(q, snap => { const o = {}; snap.forEach(d => o[d.id] = d.data()); S[col] = o; loaded(col, snap); if(col === 'players') onPlayers(); scheduleRender(); if(S.sheet) requestAnimationFrame(() => renderSheet(true)); }, onErr(col)));
+  unsubs.push(onSnapshot(doc(fs, 'config', 'club'), s => { S.club = {...DEFAULT_CLUB, ...(s.exists() ? s.data() : {})}; scheduleRender(); }, () => {}));
+  listen(collection(fs, 'teams'), 'teams');
+  listen(collection(fs, 'players'), 'players');
+  listen(collection(fs, 'posts'), 'posts');
+  if(S.isStaff){
+    const from = addDays(todayStr(), -120);
+    listen(query(collection(fs, 'events'), where('datum', '>=', from)), 'events');
+    listen(query(collection(fs, 'att'), where('datum', '>=', from)), 'att');
+    listen(collection(fs, 'contacts'), 'contacts');
+  }
+  function onPlayers(){
+    if(S.isStaff) return;
+    const teams = myTeamIds(); const key = teams.join(',');
+    if(key === teamKey) return; teamKey = key;
+    evUnsubs.forEach(u => u()); evUnsubs = [];
+    if(!teams.length){ S.events = {}; S.att = {}; pending.delete('events'); return; }
+    listen(query(collection(fs, 'events'), where('teams', 'array-contains-any', teams.slice(0, 10))), 'events', evUnsubs);
+    listen(query(collection(fs, 'att'), where('teams', 'array-contains-any', teams.slice(0, 10))), 'att', evUnsubs);
+  }
+}
+async function loadRoles(){
+  try { const snap = await getDocs(collection(fs, 'roles')); const o = {}; snap.forEach(d => o[d.id] = d.data()); S.roles = o; } catch(e){ S.roles = {}; toast(errMsg(e)); }
+  scheduleRender();
+}
+function init(){
   readHash();
-  if(!S.meId){ const sm = lsGet('sgso-me'); if(sm) S.meId = sm; }
-  render();
-  if(!(window.claude && typeof window.claude.use === 'function')){ startLocal(); return; }
-  try { [DB, USER] = await Promise.all([window.claude.use('db'), window.claude.use('user')]); } catch(e){ DB = null; }
-  if(!DB){ startLocal(); return; }
-  try { S.canEdit = USER ? !!(await USER.canEdit()) : false; } catch(e){ S.canEdit = false; }
-  S.mode = 'db';
-  const pending = new Set(['config','teams','players','events']);
-  const timer = setTimeout(() => { if(pending.size){ S.note = 'Die Vereinsdaten sind noch nicht erreichbar. Verbindung prüfen; was angezeigt wird, ist eventuell nicht aktuell.'; scheduleRender(); } }, 10000);
-  const done = (k, meta) => { if(meta && !meta.fromCache && pending.delete(k) && !pending.size){ clearTimeout(timer); if(S.note.startsWith('Die Vereinsdaten')) S.note = ''; } };
-  const onErr = e => { clearTimeout(timer); if(e && e.code === 'revoked'){ S.note = 'Zugriff auf die Vereinsdaten ist nicht mehr möglich.'; } else if(e && e.code === 'unavailable'){ S.note = 'Verbindung unterbrochen. Seite neu öffnen, um die Live-Daten wieder zu laden.'; } scheduleRender(); };
-  DB.doc('config/club').onSnapshot(s => { S.club = {...DEFAULT_CLUB, ...(s.exists ? s.data() : {})}; done('config', s.metadata); scheduleRender(); }, onErr);
-  COLS.forEach(col => DB.collection(col).onSnapshot(q => { const o = {}; q.docs.forEach(d => o[d.id] = d.data()); S[col] = o; done(col, q.metadata); scheduleRender(); if(S.sheet) requestAnimationFrame(() => renderSheet(true)); }, onErr));
-  render();
-  window.claude.use('sample').then(x => { SAMPLE = x; if(S.sub === 'import') scheduleRender(); }).catch(() => {});
-  window.claude.use('downloads').then(x => { DL = x; if(S.sub === 'export') scheduleRender(); }).catch(() => {});
+  S.auth = 'loading'; render();
+  getRedirectResult(auth).catch(e => { S.authMsg = authErr(e); render(); });
+  onAuthStateChanged(auth, u => {
+    if(!u){ stopAll(); S.auth = 'out'; S.mode = 'loading'; S.isStaff = S.isAdmin = S.canEdit = false; S.myPlayers = []; COLS.forEach(c => S[c] = {}); render(); return; }
+    resolveAccess();
+  });
 }
 init();
 </script>
