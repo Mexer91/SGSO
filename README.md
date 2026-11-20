@@ -28,7 +28,24 @@ Ersatz für SpielerPlus zur Mannschaftsverwaltung der SGSO (Männer, Alte Herren
 
 **Gratis-Grenzen (Spark):** 50.000 Lesevorgänge und 20.000 Schreibvorgänge pro Tag, 1 GiB Speicher. Trainer laden Termine der letzten 120 Tage und alle künftigen, Spieler nur die ihrer Mannschaften.
 
+## Termin-Erinnerungen (Push aufs Handy)
+Jeder Termin hat einen Erinnerungszeitpunkt. Standard: Spiele am Vortag 18:00 Uhr, Training 3 Stunden vor Beginn, Sonstiges am Vortag 18:00 Uhr (änderbar unter Mehr → Einstellungen). Trainer/Admins können ihn pro Termin im Formular ändern oder abschalten.
+
+Empfänger: alle Login-E-Mails von Spielern **und** Trainern/Betreuern im Kader der Termin-Mannschaften, die auf ihrem Gerät „Erinnerungen aktivieren“ getippt haben. iPhone: App vorher über Safari → Teilen → „Zum Home-Bildschirm“ installieren (iOS 16.4+).
+
+Versand: GitHub Actions (`.github/workflows/erinnerungen.yml`) prüft alle 10 Minuten, was fällig ist, und verschickt über Firebase Cloud Messaging – kostenlos, ohne Blaze-Tarif. Je nach GitHub-Auslastung kommt die Mitteilung einige Minuten nach der eingestellten Zeit.
+
+**Einrichtung**
+1. Firebase → Projekteinstellungen → Cloud Messaging → Web-Push-Zertifikate → „Schlüsselpaar generieren“. Den Schlüssel in der App unter Mehr → Einstellungen → „Web-Push-Schlüssel“ eintragen (nur Admin).
+2. Firebase → Projekteinstellungen → Dienstkonten → „Neuen privaten Schlüssel generieren“ (JSON-Datei).
+3. GitHub → Settings → Secrets and variables → Actions → „New repository secret“: Name `FIREBASE_SERVICE_ACCOUNT`, Inhalt = komplette JSON-Datei. **Diese Datei niemals ins Repo hochladen oder weitergeben.**
+4. GitHub → Actions → „Termin-Erinnerungen“ → „Run workflow“ zum Testen.
+5. Neue `firestore.rules` in Firebase veröffentlichen.
+
 ## Dateien
 - `index.html` – Teamplaner (Firebase)
 - `firestore.rules` – Sicherheitsregeln für Firestore
+- `rem.js` – Erinnerungslogik (App und Versand)
+- `scripts/send-reminders.mjs`, `.github/workflows/erinnerungen.yml` – Versand der Erinnerungen
+- `firebase-messaging-sw.js`, `manifest.webmanifest`, Icons – Push und Installation aufs Handy
 - `football_club_app.html` – frühere Version (React)

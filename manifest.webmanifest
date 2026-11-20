@@ -1,0 +1,17 @@
+{
+  "name": "SGSO Teamplaner",
+  "short_name": "SGSO",
+  "description": "Termine, Kader und Zusagen der SGSO-Mannschaften",
+  "lang": "de",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f2f5f1",
+  "theme_color": "#1d6a43",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

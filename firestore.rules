@@ -24,6 +24,18 @@ service cloud.firestore {
       allow read: if isMember();
       allow write: if isStaff();
     }
+    // Signal an den Erinnerungs-Versand: Standardzeiten neu berechnen
+    match /config/remBackfill {
+      allow read, write: if isStaff();
+    }
+
+    // Push-Geräte (nur der Versand per Dienstkonto liest sie)
+    match /tokens/{tok} {
+      allow create, update: if signedIn()
+        && request.resource.data.email == email()
+        && request.resource.data.uid == request.auth.uid;
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
 
     // Trainer/Admins (Dokument-ID = E-Mail in Kleinbuchstaben)
     match /roles/{mail} {

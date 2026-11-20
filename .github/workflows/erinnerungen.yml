@@ -1,0 +1,44 @@
+name: Termin-Erinnerungen
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'   # alle 10 Minuten (GitHub startet teils mit einigen Minuten Verzögerung)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: erinnerungen
+  cancel-in-progress: false
+
+jobs:
+  senden:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Abhängigkeiten installieren
+        run: npm install --omit=dev --no-audit --no-fund
+      - name: Erinnerungen verschicken
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: node scripts/send-reminders.mjs
+      # GitHub pausiert zeitgesteuerte Abläufe nach 60 Tagen ohne Änderungen im Repo.
+      # Dieser Schritt hält den Ablauf aktiv, indem er höchstens alle 45 Tage eine kleine Datei aktualisiert.
+      - name: Ablauf aktiv halten
+        if: github.event_name == 'schedule'
+        run: |
+          last=$(git log -1 --format=%ct)
+          now=$(date +%s)
+          if [ $(( (now - last) / 86400 )) -ge 45 ]; then
+            date -u > .github/keepalive
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/keepalive
+            git commit -m "Erinnerungen: Ablauf aktiv halten"
+            git push
+          fi

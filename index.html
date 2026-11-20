@@ -4,6 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>SGSO Teamplaner</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<meta name="theme-color" content="#1d6a43">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="SGSO">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
@@ -176,6 +183,8 @@ details.help ol{margin:8px 0 0;padding-left:20px}
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, onAuthStateChanged, signOut, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getMessaging, getToken, deleteToken, isSupported as messagingSupported, onMessage } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js';
+import { REM_DEFAULTS, defaultRem, effectiveRem, berlinNowStr } from './rem.js';
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, setDoc, deleteDoc, getDoc, getDocs, onSnapshot, query, where, writeBatch, arrayUnion, arrayRemove } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 const firebaseConfig = {
@@ -330,7 +339,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const clone = o => JSON.parse(JSON.stringify(o ?? null));
 
-const DEFAULT_CLUB = {name:'SGSO', heimKeys:'Oberwiera, Schönberg, SGSO', treffHeim:60, treffAus:90};
+const DEFAULT_CLUB = {name:'SGSO', heimKeys:'Oberwiera, Schönberg, SGSO', treffHeim:60, treffAus:90, vapidKey:'', ...REM_DEFAULTS};
 const DEFAULT_TEAMS = {
   herren:{name:'Männer', kurz:'Männer', order:1, farbe:'#1d6a43', ab:18, trainer:'', fbUrl:'', training:[]},
   ah:{name:'Alte Herren', kurz:'AH', order:2, farbe:'#9a5b13', ab:32, trainer:'', fbUrl:'', training:[]},
@@ -384,6 +393,13 @@ function evTitle(e){
   return e.titel || 'Termin';
 }
 function typLabel(e){ return e.typ === 'spiel' ? 'Spiel · ' + (e.heim ? 'Heim' : 'Auswärts') : e.typ === 'training' ? 'Training' : 'Termin'; }
+function fmtRem(ts){ if(!ts) return ''; const [d,t] = ts.split('T'); const x = parseD(d); return WD[x.getDay()]+', '+x.getDate()+'.'+(x.getMonth()+1)+'. '+(t||'')+' Uhr'; }
+function remInfo(e){
+  if(e.remOff) return 'keine Erinnerung';
+  if(e.status === 'abgesagt') return 'keine (abgesagt)';
+  const r = effectiveRem(e, S.club); if(!r) return 'keine';
+  return fmtRem(r) + (e.remManual ? ' · individuell' : ' · automatisch') + (e.remSent && e.remSent === r ? ' · versendet' : (r < berlinNowStr() ? (e.datum >= todayStr() ? ' · wird gleich versendet' : '') : ''));
+}
 function longDate(ds){ const d = parseD(ds); return WDL[d.getDay()]+', '+d.getDate()+'. '+MON[d.getMonth()]+' '+d.getFullYear(); }
 function firstTeamColor(ids){ const t = S.teams[(ids||[])[0]]; return t ? t.farbe : '#888'; }
 function nextBirthday(geb){ if(!geb) return null; const b = parseD(geb), now = new Date(); now.setHours(0,0,0,0); let n = new Date(now.getFullYear(), b.getMonth(), b.getDate()); if(n < now) n = new Date(now.getFullYear()+1, b.getMonth(), b.getDate()); return {date:n, days:Math.round((n-now)/864e5), age:n.getFullYear()-b.getFullYear()}; }
@@ -404,6 +420,7 @@ async function retry(fn){ try { return await fn(); } catch(e){ if(e && e.code ==
 /* ---------- writes (Firestore) ---------- */
 async function put(col, id, data){
   data = clone(data);
+  if(col === 'events'){ if(!data.remManual || !data.rem) { data.remManual = false; data.rem = defaultRem(data, S.club); } }
   await setDoc(doc(fs, col, id), data);
   S[col] = {...S[col], [id]: data};
   if(col === 'events' && S.att[id]){ setDoc(doc(fs, 'att', id), {datum: data.datum || '', teams: evTeams(data)}, {merge:true}).catch(() => {}); }
@@ -418,6 +435,7 @@ async function putClub(data){
   data = clone(data);
   await setDoc(doc(fs, 'config', 'club'), data);
   S.club = {...DEFAULT_CLUB, ...data}; scheduleRender();
+  setDoc(doc(fs, 'config', 'remBackfill'), {date:''}).catch(() => {});
 }
 async function setAtt(eid, pid, val){
   const v = {s: val.s || '', r: val.r || '', at: Date.now()};
@@ -511,6 +529,7 @@ function viewTermine(){
   const bdays = Object.values(S.players).filter(p => { const n = nextBirthday(p.geb); return n && n.days === 0; });
   if(bdays.length) h += `<div class="banner info"><b>Heute Geburtstag:</b> ${bdays.map(p => esc(pName(p))+' ('+nextBirthday(p.geb).age+')').join(', ')}</div>`;
   const recent = Object.entries(S.posts).map(([id,p]) => ({id,...p})).filter(p => p.at > Date.now()-7*864e5 && (!p.teams || !p.teams.length || !m || (m.teams||[]).some(t => p.teams.includes(t)))).sort((a,b) => b.at-a.at)[0];
+  h += pushCard(true);
   if(recent) h += `<button type="button" class="card pad" data-act="sub" data-sub="pinnwand" style="text-align:left;cursor:pointer"><div class="lbl">Pinnwand</div><div style="margin-top:2px">${esc(recent.text.length > 160 ? recent.text.slice(0,160)+'…' : recent.text)}</div></button>`;
   h += `<div class="row between"><div class="seg" role="group" aria-label="Ansicht">
       <button type="button" data-act="scope" data-v="meine" aria-pressed="${S.f.scope==='meine'}">Meine</button>
@@ -803,12 +822,18 @@ function viewSettings(){
   const c = S.club; const m = me();
   let h = back + `<h2 style="font-size:24px">Einstellungen</h2>`;
   h += `<div class="card pad" style="display:flex;flex-direction:column;gap:8px"><b>${S.isStaff ? 'Das bin ich' : 'Ausgewählter Spieler'}</b><span class="small muted">Bestimmt, welche Termine unter „Meine“ erscheinen.</span><div class="row"><span>${m ? esc(pName(m)) : 'Nicht gewählt'}</span><button type="button" class="btn small" data-act="whoami">Ändern</button></div></div>`;
+  h += pushCard(false);
   if(S.canEdit){
     h += `<form class="card pad f" data-form="club"><b>Verein</b>
       <div class="fld"><label for="cName">Vereinsname (kurz)</label><input id="cName" name="name" value="${esc(c.name)}" required></div>
       <div class="fld"><label for="cKeys">Stichworte für eigene Teams (Heim/Auswärts-Erkennung beim Import)</label><input id="cKeys" name="heimKeys" value="${esc(c.heimKeys)}"><span class="small muted">Komma-getrennt. Steht eines davon im Heimteam, gilt das Spiel als Heimspiel.</span></div>
       <div class="f2"><div class="fld"><label for="cTh">Treff vor Heimspiel (Min.)</label><input id="cTh" name="treffHeim" type="number" min="0" max="240" value="${esc(c.treffHeim)}"></div>
       <div class="fld"><label for="cTa">Treff vor Auswärtsspiel (Min.)</label><input id="cTa" name="treffAus" type="number" min="0" max="300" value="${esc(c.treffAus)}"></div></div>
+      <b style="margin-top:6px">Standard-Erinnerungen</b><span class="small muted">Gilt für alle Termine ohne eigenen Zeitpunkt. Trainer können ihn pro Termin ändern.</span>
+      <div class="f2"><div class="fld"><label for="cRsT">Spiele: Tage vorher</label><input id="cRsT" name="remSpielTage" type="number" min="0" max="14" value="${esc(c.remSpielTage)}"></div><div class="fld"><label for="cRsZ">Spiele: Uhrzeit</label><input id="cRsZ" name="remSpielZeit" type="time" value="${esc(c.remSpielZeit)}"></div></div>
+      <div class="fld"><label for="cRtS">Training: Stunden vor Beginn</label><input id="cRtS" name="remTrainingStd" type="number" min="0" max="72" value="${esc(c.remTrainingStd)}"></div>
+      <div class="f2"><div class="fld"><label for="cReT">Sonstige: Tage vorher</label><input id="cReT" name="remEventTage" type="number" min="0" max="14" value="${esc(c.remEventTage)}"></div><div class="fld"><label for="cReZ">Sonstige: Uhrzeit</label><input id="cReZ" name="remEventZeit" type="time" value="${esc(c.remEventZeit)}"></div></div>
+      ${S.isAdmin ? `<div class="fld"><label for="cVap">Web-Push-Schlüssel (Firebase → Projekteinstellungen → Cloud Messaging → Web-Push-Zertifikate)</label><input id="cVap" name="vapidKey" value="${esc(c.vapidKey||'')}" placeholder="B…" autocomplete="off"></div>` : ''}
       <button class="btn primary" type="submit">Speichern</button></form>`;
   }
   h += `<div class="card pad" style="display:flex;flex-direction:column;gap:8px"><b>Konto</b><span class="small muted">Angemeldet als ${esc(S.email)} · ${S.isAdmin ? 'Admin' : S.isStaff ? 'Trainer' : 'Spieler/Eltern'}</span><div><button type="button" class="btn" data-act="logout">Abmelden</button></div></div>`;
@@ -844,7 +869,7 @@ function sheetEvent(id){
   const a = attOf(id); const m = me(); const ps = eventPlayers(e); const c = counts(e);
   const mineIds = (S.isStaff ? (S.meId ? [S.meId] : []) : S.myPlayers).filter(pid => S.players[pid] && relevantFor(e, S.players[pid]));
   let b = `<div class="row" style="gap:6px"><span class="pill p-${esc(e.typ)}">${esc(typLabel(e))}</span>${evTeams(e).map(tchip).join('')}${e.status==='abgesagt' ? '<span class="pill p-cancel">Abgesagt</span>' : ''}</div>`;
-  b += `<dl class="kv"><dt>Datum</dt><dd>${esc(longDate(e.datum))}</dd><dt>Zeit</dt><dd>${esc(e.zeit ? e.zeit+(e.ende?'–'+e.ende:'')+' Uhr' : 'offen')}</dd>${e.treff ? `<dt>Treffpunkt</dt><dd><b>${esc(e.treff)} Uhr</b></dd>` : ''}${e.ort ? `<dt>Ort</dt><dd>${esc(e.ort)} · <a href="${esc(mapsLink(e.ort))}" target="_blank" rel="noopener">Karte</a></dd>` : ''}${e.typ==='spiel' ? `<dt>Gegner</dt><dd>${esc(e.gegner||'offen')} (${e.heim?'Heim':'Auswärts'})</dd>` : ''}${e.wettbewerb ? `<dt>Wettbewerb</dt><dd>${esc(e.wettbewerb)}</dd>` : ''}${e.ergebnis ? `<dt>Ergebnis</dt><dd><b>${esc(e.ergebnis)}</b></dd>` : ''}${e.notiz ? `<dt>Info</dt><dd style="white-space:pre-wrap">${esc(e.notiz)}</dd>` : ''}<dt>Quelle</dt><dd class="small muted">${esc(e.quelle === 'fussball.de' ? 'fussball.de-Import' : e.quelle === 'serie' ? 'Trainingsserie' : 'manuell angelegt')}</dd></dl>`;
+  b += `<dl class="kv"><dt>Datum</dt><dd>${esc(longDate(e.datum))}</dd><dt>Zeit</dt><dd>${esc(e.zeit ? e.zeit+(e.ende?'–'+e.ende:'')+' Uhr' : 'offen')}</dd>${e.treff ? `<dt>Treffpunkt</dt><dd><b>${esc(e.treff)} Uhr</b></dd>` : ''}${e.ort ? `<dt>Ort</dt><dd>${esc(e.ort)} · <a href="${esc(mapsLink(e.ort))}" target="_blank" rel="noopener">Karte</a></dd>` : ''}${e.typ==='spiel' ? `<dt>Gegner</dt><dd>${esc(e.gegner||'offen')} (${e.heim?'Heim':'Auswärts'})</dd>` : ''}${e.wettbewerb ? `<dt>Wettbewerb</dt><dd>${esc(e.wettbewerb)}</dd>` : ''}${e.ergebnis ? `<dt>Ergebnis</dt><dd><b>${esc(e.ergebnis)}</b></dd>` : ''}${e.notiz ? `<dt>Info</dt><dd style="white-space:pre-wrap">${esc(e.notiz)}</dd>` : ''}<dt>Erinnerung</dt><dd class="small">${esc(remInfo(e))}</dd><dt>Quelle</dt><dd class="small muted">${esc(e.quelle === 'fussball.de' ? 'fussball.de-Import' : e.quelle === 'serie' ? 'Trainingsserie' : 'manuell angelegt')}</dd></dl>`;
   if(mineIds.length && e.status !== 'abgesagt'){
     b += mineIds.map(pid => { const mine = a[pid] || {}; return `<div class="card pad hl" style="display:flex;flex-direction:column;gap:8px"><b>${mineIds.length > 1 || pid !== S.meId ? 'Rückmeldung für ' + esc(pName(S.players[pid])) : 'Deine Rückmeldung'}</b>${rsvpButtons(id, pid, mine.s, true)}
       ${mine.s === 'n' || mine.s === 'm' ? `<div class="fld"><label for="attReason-${esc(pid)}">Grund (optional)</label><input id="attReason-${esc(pid)}" value="${esc(mine.r||'')}" placeholder="z. B. krank, Schule, Urlaub" data-reason-e="${esc(id)}" data-reason-p="${esc(pid)}"></div>` : ''}</div>`; }).join('');
@@ -869,8 +894,8 @@ function teamChecks(name, sel, hintGeb){
 }
 function sheetEvForm(id, extra){
   const e = id ? clone(S.events[id]) : {typ:(extra&&extra.typ)||'training', teams: (extra&&extra.teams) || (S.f.team ? [S.f.team] : (me() ? (me().teams||[]).slice(0,1) : [])), datum: todayStr(), zeit:'', ende:'', treff:'', ort:'', gegner:'', heim:true, wettbewerb:'', titel:'', notiz:'', ergebnis:'', status:'geplant', quelle:'manuell'};
-  if(extra && extra.copyOf){ Object.assign(e, clone(S.events[extra.copyOf])); delete e.extId; delete e.serieId; e.quelle = 'manuell'; e.ergebnis = ''; e.dienste = []; }
-  if(extra && extra.draft){ Object.keys(extra.draft).forEach(k => { if(extra.draft[k] !== '' || k === 'teams') e[k] = extra.draft[k]; }); }
+  if(extra && extra.copyOf){ Object.assign(e, clone(S.events[extra.copyOf])); delete e.extId; delete e.serieId; delete e.remSent; delete e.remSentAt; e.quelle = 'manuell'; e.ergebnis = ''; e.dienste = []; }
+  if(extra && extra.draft){ Object.keys(extra.draft).forEach(k => { if(extra.draft[k] !== '' || k === 'teams') e[k] = extra.draft[k]; }); const rm = extra.draft.remMode; if(rm){ e.remOff = rm === 'off'; e.remManual = rm === 'manual'; } }
   const typ = e.typ;
   const b = `<form class="f" data-form="event" data-id="${esc(id||'')}">
     <div class="seg" role="group" aria-label="Art">${[['training','Training'],['spiel','Spiel'],['event','Sonstiges']].map(([v,l]) => `<button type="button" data-act="evtyp" data-v="${v}" aria-pressed="${typ===v}">${l}</button>`).join('')}</div>
@@ -883,6 +908,10 @@ function sheetEvForm(id, extra){
     <div class="f2"><div class="fld"><label for="eEnde">Ende</label><input id="eEnde" name="ende" type="time" value="${esc(e.ende)}"></div><div class="fld"><label for="eTreff">Treffpunkt (Uhrzeit)</label><input id="eTreff" name="treff" type="time" value="${esc(e.treff)}"></div></div>
     <div class="fld"><label for="eOrt">Ort</label><input id="eOrt" name="ort" value="${esc(e.ort)}" placeholder="z. B. Sportplatz Oberwiera"></div>
     ${typ === 'spiel' ? `<div class="fld"><label for="eErg">Ergebnis</label><input id="eErg" name="ergebnis" value="${esc(e.ergebnis)}" placeholder="z. B. 3:1"></div>` : ''}
+    <div class="fld"><label for="eRemMode">Erinnerung aufs Handy</label>
+      <div class="f2"><select id="eRemMode" name="remMode"><option value="auto" ${!e.remOff && !e.remManual ? 'selected' : ''}>Automatisch</option><option value="manual" ${!e.remOff && e.remManual ? 'selected' : ''}>Eigener Zeitpunkt</option><option value="off" ${e.remOff ? 'selected' : ''}>Keine Erinnerung</option></select>
+      <input id="eRem" name="rem" type="datetime-local" aria-label="Erinnerungszeitpunkt" value="${esc(e.remManual && e.rem ? e.rem : defaultRem(e, S.club))}" ${!e.remOff && e.remManual ? '' : 'disabled'}></div>
+      <span class="small muted" id="remPreview">${e.remOff ? 'Für diesen Termin wird nicht erinnert.' : e.remManual ? 'Individueller Zeitpunkt.' : 'Nach Vereinsstandard: ' + esc(fmtRem(defaultRem(e, S.club)))}</span></div>
     <div class="fld"><label for="eNotiz">Info für die Mannschaft</label><textarea id="eNotiz" name="notiz" placeholder="z. B. schwarze Stutzen mitbringen">${esc(e.notiz)}</textarea></div>
     <button class="btn primary" type="submit">Speichern</button></form>`;
   return sheetWrap(id ? 'Termin bearbeiten' : 'Neuer Termin', b);
@@ -1006,7 +1035,9 @@ document.addEventListener('click', async ev => {
       case 'authcheck': { if(auth.currentUser){ await auth.currentUser.reload(); S.authMsg = ''; await resolveAccess(); if(S.auth === 'verify'){ S.authMsg = 'Noch nicht bestätigt. Bitte den Link in der E-Mail öffnen.'; render(); } } break; }
       case 'authresend': { try { await sendEmailVerification(auth.currentUser, {url: APP_URL}); S.authMsg = 'Bestätigungslink erneut gesendet.'; } catch(e){ S.authMsg = authErr(e); } render(); break; }
       case 'authsetup': { el.disabled = true; try { await doSetup(); } catch(e){ console.error(e); S.authMsg = 'Einrichtung fehlgeschlagen. Sind die Firestore-Regeln veröffentlicht?'; render(); } break; }
-      case 'logout': closeSheet(); await signOut(auth); break;
+      case 'logout': closeSheet(); await pushCleanup(); pushInitDone = false; S.push = null; await signOut(auth); break;
+      case 'pushon': await enablePush(); break;
+      case 'pushlater': lsSet('sgso-push-later', '1'); render(); break;
       case 'roledel': askConfirm(`Zugang für ${id} entziehen?`, 'Entziehen', async () => { await deleteDoc(doc(fs, 'roles', id)); await loadRoles(); }); break;
       case 'ics1': { const e = S.events[id]; downloadFile('termin-' + e.datum + '.ics', toICS([{id, ...e}])); break; }
       case 'icsme': { const evs = myUpcoming(); if(!evs.length){ toast('Keine kommenden Termine.'); break; } downloadFile('meine-termine.ics', toICS(evs)); break; }
@@ -1039,10 +1070,12 @@ document.addEventListener('input', e => {
   else if(t.id === 'pimpText'){ S.pimp.text = t.value; clearTimeout(t._d); t._d = setTimeout(render, 400); }
   else if(t.dataset.ir != null){ const r = S.imp.rows[+t.dataset.ir]; if(r){ r[t.dataset.k] = t.type === 'checkbox' ? t.checked : t.value; } }
   else if(t.id === 'whoQ'){ const q = t.value.toLowerCase(); document.querySelectorAll('#whoList [data-name]').forEach(b => b.hidden = !b.dataset.name.includes(q)); }
+  else if(t.closest && t.closest('form[data-form="event"]') && ['eDat','eZeit'].includes(t.id)){ updateRemPreview(t.closest('form')); }
   else if(t.id === 'pG'){ const sug = suggestTeam(S.teams, t.value); const el = $('#pSuggest'); if(el) el.textContent = sug ? 'Laut Jahrgang: ' + S.teams[sug].name : ''; }
 });
 document.addEventListener('change', async e => {
   const t = e.target;
+  if(t.id === 'eRemMode'){ const f = t.closest('form'); const inp = f.querySelector('#eRem'); inp.disabled = t.value !== 'manual'; if(t.value === 'manual' && !inp.value) inp.value = defaultRem(formData(f), S.club); updateRemPreview(f); return; }
   if(t.id === 'impTeam'){ S.imp.team = t.value; S.imp.rows = classifyRows(S.imp.rows, t.value); render(); }
   else if(t.dataset.ir != null && t.type === 'checkbox'){ render(); }
   else if(t.dataset.ir != null && (t.dataset.k === 'datum' || t.dataset.k === 'heim' || t.dataset.k === 'gast')){ S.imp.rows = classifyRows(S.imp.rows.map(r => ({...r})), S.imp.team).map((r,i) => ({...r, on: S.imp.rows[i].on})); render(); }
@@ -1056,6 +1089,13 @@ document.addEventListener('change', async e => {
   else if(t.id === 'stTyp'){ S.stat.typ = t.value; render(); }
   else if(t.dataset.reasonE){ const eid = t.dataset.reasonE, pid = t.dataset.reasonP; const cur = attOf(eid)[pid] || {}; try { await setAtt(eid, pid, {s:cur.s, r:t.value.trim()}); toast('Grund gespeichert.'); } catch(err){ toast(errMsg(err)); } }
 });
+function updateRemPreview(f){
+  const d = formData(f); const el = f.querySelector('#remPreview'); if(!el) return;
+  const def = defaultRem({typ:d.typ, datum:d.datum, zeit:d.zeit}, S.club);
+  if(d.remMode === 'off') el.textContent = 'Für diesen Termin wird nicht erinnert.';
+  else if(d.remMode === 'manual') el.textContent = 'Individueller Zeitpunkt. Standard wäre: ' + fmtRem(def);
+  else { el.textContent = 'Nach Vereinsstandard: ' + fmtRem(def); const inp = f.querySelector('#eRem'); if(inp) inp.value = def; }
+}
 function formData(f){ const o = {}; new FormData(f).forEach((v,k) => { if(k === 'teams'){ (o.teams = o.teams || []).push(v); } else o[k] = typeof v === 'string' ? v.trim() : v; }); o.teams = o.teams || []; return o; }
 document.addEventListener('submit', async ev => {
   const f = ev.target; if(!f.dataset.form) return; ev.preventDefault();
@@ -1080,6 +1120,10 @@ document.addEventListener('submit', async ev => {
       const e = {...base, typ:d.typ, teams:d.teams, datum:d.datum, zeit:d.zeit||'', ende:d.ende||'', treff:d.treff||'', ort:d.ort||'', notiz:d.notiz||''};
       if(d.typ === 'spiel'){ e.gegner = d.gegner||''; e.heim = d.heim !== '0'; e.wettbewerb = d.wettbewerb||''; e.ergebnis = d.ergebnis||''; e.titel = ''; if(!e.treff && e.zeit) e.treff = addMin(e.zeit, -(e.heim ? +S.club.treffHeim : +S.club.treffAus)); }
       else { e.titel = d.titel || (d.typ === 'training' ? 'Training' : 'Termin'); }
+      const rm = d.remMode || 'auto';
+      e.remOff = rm === 'off';
+      e.remManual = rm === 'manual' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(d.rem || '');
+      if(e.remManual){ e.rem = d.rem; if(e.zeit && d.rem > e.datum + 'T' + e.zeit) toast('Hinweis: Die Erinnerung liegt nach Terminbeginn.'); }
       const nid = id || uid(); await put('events', nid, e); toast('Termin gespeichert.'); openSheet('event', nid);
     } else if(f.dataset.form === 'player'){
       const base = id ? clone(S.players[id]) : {};
@@ -1110,7 +1154,9 @@ document.addEventListener('submit', async ev => {
       await batch(items, it => put('events', uid(), it), (n, all) => { if(btn) btn.textContent = n + ' / ' + all + ' angelegt…'; });
       toast(items.length + ' Trainings angelegt.'); closeSheet(); S.view = 'termine'; S.f.team = id; S.f.typ = ''; render();
     } else if(f.dataset.form === 'club'){
-      await putClub({name:d.name, heimKeys:d.heimKeys, treffHeim:+d.treffHeim||0, treffAus:+d.treffAus||0}); toast('Einstellungen gespeichert.');
+      await putClub({...clone(S.club), name:d.name, heimKeys:d.heimKeys, treffHeim:+d.treffHeim||0, treffAus:+d.treffAus||0,
+        remSpielTage:+d.remSpielTage||0, remSpielZeit:d.remSpielZeit||'18:00', remTrainingStd:+d.remTrainingStd||0, remEventTage:+d.remEventTage||0, remEventZeit:d.remEventZeit||'18:00',
+        vapidKey: S.isAdmin ? (d.vapidKey||'').trim() : (S.club.vapidKey||'')}); toast('Einstellungen gespeichert. Erinnerungen werden angepasst.');
     } else if(f.dataset.form === 'post'){
       await put('posts', uid(), {text:d.text, teams:d.teams, autor:d.autor||'', at:Date.now()}); f.reset(); toast('Veröffentlicht.');
     }
@@ -1126,6 +1172,69 @@ async function doPImport(){
   S.pimp.text = ''; S.view = 'spieler'; S.sub = null; render();
 }
 function setMe(id){ S.meId = id; if(id) lsSet('sgso-me', id); else { try { localStorage.removeItem('sgso-me'); } catch(e){} } }
+
+/* ---------- Push-Benachrichtigungen ---------- */
+const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const IS_STANDALONE = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+let messaging = null, swReg = null, pushInitDone = false;
+async function checkPush(){
+  let ok = 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window;
+  if(ok){ try { ok = await messagingSupported(); } catch(e){ ok = false; } }
+  if(!ok){ S.push = IS_IOS && !IS_STANDALONE ? 'ios-install' : 'unsupported'; return; }
+  S.push = Notification.permission; // default | granted | denied
+}
+async function getPushToken(){
+  if(!swReg) swReg = await navigator.serviceWorker.register('./firebase-messaging-sw.js', {scope:'./'});
+  if(!messaging){
+    messaging = getMessaging(fbApp);
+    onMessage(messaging, p => toast((p.notification && p.notification.title ? p.notification.title + ': ' : '') + ((p.notification && p.notification.body) || 'Neue Mitteilung')));
+  }
+  return await getToken(messaging, {vapidKey: S.club.vapidKey, serviceWorkerRegistration: swReg});
+}
+async function saveToken(tok, force){
+  if(!tok) return;
+  const old = lsGet('sgso-push'), at = +(lsGet('sgso-push-at') || 0);
+  if(!force && old === tok && Date.now() - at < 7*864e5) return;
+  await setDoc(doc(fs, 'tokens', tok), {email:S.email, uid:auth.currentUser.uid, at:Date.now(), ua:navigator.userAgent.slice(0,160)});
+  if(old && old !== tok) deleteDoc(doc(fs, 'tokens', old)).catch(() => {});
+  lsSet('sgso-push', tok); lsSet('sgso-push-at', String(Date.now()));
+}
+async function initPush(){
+  if(pushInitDone || S.auth !== 'in') return; pushInitDone = true;
+  await checkPush(); scheduleRender();
+  if(S.push === 'granted' && S.club.vapidKey){ try { await saveToken(await getPushToken()); } catch(e){ console.warn('Push-Token', e); } }
+}
+async function enablePush(){
+  if(!S.club.vapidKey){ toast('Push ist noch nicht eingerichtet. Ein Admin muss den Web-Push-Schlüssel in den Einstellungen eintragen.'); return; }
+  await checkPush();
+  if(S.push === 'ios-install'){ S.view = 'mehr'; S.sub = 'einstellungen'; render(); return; }
+  if(S.push === 'unsupported'){ toast('Dieser Browser unterstützt keine Mitteilungen. Bitte Chrome (Android) oder Safari (iPhone) nutzen.'); return; }
+  const perm = await Notification.requestPermission(); S.push = perm;
+  if(perm !== 'granted'){ toast('Mitteilungen wurden nicht erlaubt. Das lässt sich in den Handy-Einstellungen ändern.'); render(); return; }
+  try { await saveToken(await getPushToken(), true); toast('Erinnerungen sind aktiviert.'); }
+  catch(e){ console.error(e); toast('Aktivieren fehlgeschlagen. Bitte Seite neu laden und erneut versuchen.'); }
+  render();
+}
+async function pushCleanup(){
+  const tok = lsGet('sgso-push'); if(!tok) return;
+  try { await deleteDoc(doc(fs, 'tokens', tok)); } catch(e){}
+  try { if(messaging) await deleteToken(messaging); } catch(e){}
+  try { localStorage.removeItem('sgso-push'); localStorage.removeItem('sgso-push-at'); } catch(e){}
+}
+function pushCard(compact){
+  const st = S.push || 'unknown';
+  if(!S.club.vapidKey){ return compact ? '' : `<div class="card pad small muted"><b style="color:var(--ink)">Erinnerungen aufs Handy</b><br>${S.isAdmin ? 'Noch nicht eingerichtet: Unten im Feld „Web-Push-Schlüssel“ den Schlüssel aus Firebase eintragen.' : 'Noch nicht eingerichtet.'}</div>`; }
+  if(compact && (st === 'granted' || st === 'denied' || st === 'unsupported' || st === 'unknown' || lsGet('sgso-push-later'))) return '';
+  const iosGuide = `<ol class="small" style="margin:4px 0 0;padding-left:20px"><li>Diese Seite in <b>Safari</b> öffnen.</li><li>Unten auf <b>Teilen</b> (Quadrat mit Pfeil) tippen.</li><li><b>„Zum Home-Bildschirm“</b> wählen und hinzufügen.</li><li>Die App über das neue Symbol öffnen und hier „Aktivieren“ tippen.</li></ol>`;
+  let body = '';
+  if(st === 'granted') body = `<span class="pill p-y">Aktiv</span> <span class="small muted">Du bekommst Erinnerungen auf diesem Gerät.</span>`;
+  else if(st === 'denied') body = `<span class="small">Mitteilungen sind blockiert. In den Einstellungen des Handys bzw. Browsers für diese Seite erlauben.</span>`;
+  else if(st === 'ios-install') body = `<span class="small">Auf dem iPhone funktionieren Erinnerungen nur, wenn die App auf dem Home-Bildschirm liegt:</span>${iosGuide}`;
+  else if(st === 'unsupported') body = `<span class="small">Dieser Browser kann keine Mitteilungen empfangen. Auf Android Chrome nutzen, auf dem iPhone Safari (iOS 16.4 oder neuer).</span>`;
+  else body = `<span class="small">Lass dich vor Spielen und Trainings automatisch erinnern.</span><div class="row" style="margin-top:6px"><button type="button" class="btn primary small" data-act="pushon">Aktivieren</button>${compact ? '<button type="button" class="btn small" data-act="pushlater">Später</button>' : ''}</div>`;
+  if(compact && st === 'ios-install') body += `<div class="row" style="margin-top:6px"><button type="button" class="btn small" data-act="pushlater">Später</button></div>`;
+  return `<div class="card pad ${compact ? 'hl' : ''}" style="display:flex;flex-direction:column;gap:4px"><b>Erinnerungen aufs Handy</b>${body}${compact ? '' : `<span class="small muted" style="margin-top:4px">Erinnert wird, wer als Login-E-Mail bei einem Spieler der Mannschaft hinterlegt ist. Trainer tragen sich dafür selbst im Kader ein (Rolle Trainer) mit ihrer Login-E-Mail.</span>`}</div>`;
+}
 
 /* ---------- Anmeldung & Start ---------- */
 function readHash(){
@@ -1209,7 +1318,7 @@ function subscribeAll(){
   const loaded = (k, snap) => { if(!snap.metadata.fromCache && pending.delete(k) && !pending.size){ clearTimeout(timer); if(S.note.startsWith('Die Vereinsdaten')) S.note = ''; scheduleRender(); } };
   const onErr = col => e => { console.error(col, e); S.note = e.code === 'permission-denied' ? 'Keine Leserechte für „'+col+'“. Firestore-Regeln prüfen.' : 'Verbindung unterbrochen. Seite neu laden.'; scheduleRender(); };
   const listen = (q, col, list) => (list || unsubs).push(onSnapshot(q, snap => { const o = {}; snap.forEach(d => o[d.id] = d.data()); S[col] = o; loaded(col, snap); if(col === 'players') onPlayers(); scheduleRender(); if(S.sheet) requestAnimationFrame(() => renderSheet(true)); }, onErr(col)));
-  unsubs.push(onSnapshot(doc(fs, 'config', 'club'), s => { S.club = {...DEFAULT_CLUB, ...(s.exists() ? s.data() : {})}; scheduleRender(); }, () => {}));
+  unsubs.push(onSnapshot(doc(fs, 'config', 'club'), s => { S.club = {...DEFAULT_CLUB, ...(s.exists() ? s.data() : {})}; scheduleRender(); initPush(); }, () => {}));
   listen(collection(fs, 'teams'), 'teams');
   listen(collection(fs, 'players'), 'players');
   listen(collection(fs, 'posts'), 'posts');
