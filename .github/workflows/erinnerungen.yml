@@ -1,8 +1,9 @@
 name: Termin-Erinnerungen
 
 on:
-  schedule:
-    - cron: '*/10 * * * *'   # alle 10 Minuten (GitHub startet teils mit einigen Minuten Verzögerung)
+  # Automatischer Versand deaktiviert (26.11.2026). Zum Reaktivieren die beiden Zeilen wieder einkommentieren:
+  # schedule:
+  #   - cron: '*/10 * * * *'   # alle 10 Minuten
   workflow_dispatch: {}
 
 permissions:
